@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+
+[project]
+name = "fusion"
+description = "fusion tools, plugins and utilities for Jupyter notebooks in the HuBMAP workspace."
+dynamic = ["version"]
+dependencies = [    
+    "requests",
+    "large-image",
+    "pandas", 
+    "girder-client",
+    "ipyleaflet"]
+requires-python = ">=3.11"
+authors = [
+  {name = "Srisharanya Injarapu", email = "injarapu.s@ufl.edu"},
+]
+readme = "README.md"
