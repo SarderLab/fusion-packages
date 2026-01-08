@@ -10,12 +10,17 @@ description = "fusion tools, plugins and utilities for Jupyter notebooks in the 
 dynamic = ["version"]
 dependencies = [    
     "requests",
-    "large-image",
     "pandas", 
-    "girder-client",
-    "ipyleaflet"]
+    "girder-client"]
 requires-python = ">=3.9"
 authors = [
   {name = "Srisharanya Injarapu", email = "injarapu.s@ufl.edu"},
 ]
 readme = "README.md"
+
+[project.optional-dependencies]  # ← This section was missing!
+jupyter = [
+    "large-image[all]",
+    "jupyter-server-proxy",
+    "ipyleaflet>=0.19",
+]
