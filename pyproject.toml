@@ -14,7 +14,7 @@ dependencies = [
     "pandas", 
     "girder-client",
     "ipyleaflet"]
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 authors = [
   {name = "Srisharanya Injarapu", email = "injarapu.s@ufl.edu"},
 ]
