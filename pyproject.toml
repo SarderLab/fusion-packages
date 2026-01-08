@@ -11,16 +11,11 @@ dynamic = ["version"]
 dependencies = [    
     "requests",
     "pandas", 
-    "girder-client"]
+    "girder-client",
+    "jupyter-server-proxy",
+    "ipyleaflet>=0.19"]
 requires-python = ">=3.9"
 authors = [
   {name = "Srisharanya Injarapu", email = "injarapu.s@ufl.edu"},
 ]
 readme = "README.md"
-
-[project.optional-dependencies]  # ← This section was missing!
-jupyter = [
-    "large-image[all]",
-    "jupyter-server-proxy",
-    "ipyleaflet>=0.19",
-]
