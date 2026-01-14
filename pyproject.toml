@@ -19,3 +19,6 @@ authors = [
   {name = "Srisharanya Injarapu", email = "injarapu.s@ufl.edu"},
 ]
 readme = "README.md"
+
+[project.scripts]
+fusion-get-demos = "fusion.download_notebooks:download_demo_notebooks"
