@@ -7,7 +7,7 @@ def download_demo_notebooks():
     notebooks_dir.mkdir(exist_ok=True)
     
     # GitHub raw URLs
-    base_url = "https://github.com/SarderLab/fusion-packages/tree/main/fusion/"
+    base_url = "https://raw.githubusercontent.com/SarderLab/fusion-packages/main/fusion/"
     notebooks = [
         "fusion_demo.ipynb"
     ]
