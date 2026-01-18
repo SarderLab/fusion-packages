@@ -3,7 +3,7 @@ from pathlib import Path
 
 def download_demo_notebooks():
     """Download demo notebooks to current directory"""
-    notebooks_dir = Path.home() / "fusion_demo_notebooks"
+    notebooks_dir = Path.cwd() / "fusion_demo_notebooks"
     notebooks_dir.mkdir(parents=True, exist_ok=True)
     
     # GitHub raw URLs
