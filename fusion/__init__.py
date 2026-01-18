@@ -33,7 +33,12 @@ from .plugins import *
 from .utilities import *
 
 # check if the notebooks are downloaded
-_notebooks_dir = Path.home() / "fusion_demo_notebooks"
+_cwd = Path.cwd()                           
+if _cwd.name == "fusion_demo_notebooks":    
+    _notebooks_dir = _cwd
+else:
+    _notebooks_dir = _cwd / "fusion_demo_notebooks" 
+    
 _downloaded_marker = _notebooks_dir / ".downloaded"
 
 if not _downloaded_marker.exists():
