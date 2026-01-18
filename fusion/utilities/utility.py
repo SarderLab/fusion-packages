@@ -173,7 +173,6 @@ def get_hubmap_url(hubmap_id):
         }
     r = requests.post(search_api, json=ds_payload)
     r.raise_for_status()
-    json.dump(r.json(), open("response.json", "w"), indent=4)
     hits = r.json()["hits"]["hits"]
     if not hits:
         raise ValueError(f"No dataset found for HuBMAP ID {hubmap_id}")
@@ -265,4 +264,5 @@ def get_annotation_data(gc, path, annotation_name, columns=KEY_COLS):
     
 
     return df
+
 
