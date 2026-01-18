@@ -133,8 +133,7 @@ def upload_to_athena(gc, file_source, user_name, folder_id=None, athena_url='htt
             'name': filename,
             'size': file_size
         })
-        with open('upload_initialise_response.json', 'w') as file:
-            json.dump(r, file)
+        
         upload_id = r['_id']
         print(f"Upload ID: {upload_id}")
         
@@ -266,3 +265,4 @@ def get_annotation_data(gc, path, annotation_name, columns=KEY_COLS):
     
 
     return df
+
