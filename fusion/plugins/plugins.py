@@ -69,3 +69,42 @@ def get_job_status(gc, job_id):
     
 
     return status
+
+def poll_job_status(gc, job_id):
+
+    start_time = time.time()
+    max_progress = 100
+    interval=1
+    timeout=1500
+
+    # Create a progress bar
+    bar = tqdm(total=max_progress, desc=f"Job_id: {job_id}", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}")
+
+    progress = 0
+
+    while True:
+        status = get_job_status(gc, job_id)
+
+        if status == "completed":
+            bar.n = max_progress
+            bar.refresh()
+            bar.close()
+            print("\nJob finished successfully!")
+            break
+        elif status.startswith("failed"):
+            bar.close()
+            print(f"\nJob failed ({status})")
+            break
+        elif status == "in progress":
+            progress = min(progress + 1, max_progress - 1)
+            bar.n = progress
+            bar.refresh()
+
+        # Timeout check
+        if time.time() - start_time > timeout:
+            bar.close()
+            print("\nPolling timed out")
+            break
+
+        time.sleep(interval)
+
