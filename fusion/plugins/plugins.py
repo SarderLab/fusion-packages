@@ -32,12 +32,16 @@ def get_multi_compartment_segmentation(gc, user_name, hubmapid=None, file_path=N
             
         }
         r = gc.post(run_endpoint, parameters=params)
+        print(f"job submitted. job_id={r['_id']}")
         
         # Create response dictionary
         response_summary = {
             'job_id': r['_id'],
             'plugin_name': r['_original_name'],
-            'raw': r
+            'raw': r,
+            'file_id':file_id,
+            'folder_id':folder_id,
+            'item_id':item_id
         }
         return response_summary
         
@@ -53,7 +57,7 @@ def get_job_status(gc, job_id):
     status_map = {
         3: "completed",
         2: "in progress",
-        0: "failed, inactive",
+        0: "inactive",
         4: "failed, error",
         5: "failed, canceled"
     }
@@ -63,4 +67,5 @@ def get_job_status(gc, job_id):
     status_code = job.get('status')
     status = status_map.get(status_code, 'unknown')
     
+
     return status
