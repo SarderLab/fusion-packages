@@ -3,8 +3,8 @@ from pathlib import Path
 
 def download_demo_notebooks():
     """Download demo notebooks to current directory"""
-    notebooks_dir = Path.cwd() / "fusion_demo_notebooks"
-    notebooks_dir.mkdir(exist_ok=True)
+    notebooks_dir = Path.home() / "fusion_demo_notebooks"
+    notebooks_dir.mkdir(parents=True, exist_ok=True)
     
     # GitHub raw URLs
     base_url = "https://raw.githubusercontent.com/SarderLab/fusion-packages/main/fusion/"
