@@ -15,9 +15,6 @@ def vizualise_in_histomicUI(item_id: str):
             raise
     return ts
 
-ts = vizualise_in_histomicUI(response['item_id'])
-ts
-
 def visualize_hubmap_wsi(hubmap_id,overwrite=False):
     url = get_hubmap_url(hubmap_id)
     print("URL:", url)
@@ -37,3 +34,4 @@ def visualize_hubmap_wsi(hubmap_id,overwrite=False):
     ts = large_image.open(filename)
 
     return ts
+
