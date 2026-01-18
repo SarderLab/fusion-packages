@@ -13,6 +13,7 @@ def file_exists(gc, folder_id, filename):
             return item.get('_id')
     return None
 
+
 # uploads the files to Athena without downloading it to the local workspace
 def upload_to_athena(gc, file_source, user_name, folder_id=None, athena_url='https://athena.rc.ufl.edu/api/v1'):
     """
@@ -44,13 +45,16 @@ def upload_to_athena(gc, file_source, user_name, folder_id=None, athena_url='htt
             folder = gc.post('/folder', parameters={
                 'parentType': 'user',
                 'parentId': user_id,
-                'name': folder_name
+                'name': folder_name,
+                'public': True,
+                'reuseExisting': True
             })
             folder_id = folder['_id']
             print(f"Folder created: {folder_id}")
             
         except Exception as e:
-            # Check if folder already exists
+            raise
+            '''# Check if folder already exists
             if "already exists" in str(e):
                 print(f"Folder '{folder_name}' already exists. Using existing folder.")
                 # Get the existing folder
@@ -61,8 +65,8 @@ def upload_to_athena(gc, file_source, user_name, folder_id=None, athena_url='htt
                 })
                 folder_id = folders[0]['_id']
                 print(f"Using folder: {folder_id}")
-            else:
-                raise
+            else:'''
+                
     else:
         print(f"Using provided folder_id: {folder_id}")
         
@@ -135,7 +139,7 @@ def upload_to_athena(gc, file_source, user_name, folder_id=None, athena_url='htt
         print(f"Upload ID: {upload_id}")
         
         # Upload in chunks
-        chunk_size = 64 * 1024 * 1024  
+        chunk_size = 64 * 1024 * 1024  # 64MB
         offset = 0
         with open(file_source, 'rb') as f:
             while True:
@@ -154,6 +158,7 @@ def upload_to_athena(gc, file_source, user_name, folder_id=None, athena_url='htt
     print("item_id, folder_id :", item_id, folder_id)
     
     return item_id, folder_id
+
 
 # get url of the image from hubmapid
 def get_hubmap_url(hubmap_id):
@@ -259,4 +264,5 @@ def get_annotation_data(gc, path, annotation_name, columns=KEY_COLS):
         print(f"No annotations found with name: {annotation_name}")
         df = None
     
+
     return df
