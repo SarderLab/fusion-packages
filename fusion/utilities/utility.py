@@ -2,6 +2,7 @@ import json
 import os
 import pandas as pd
 import requests
+from pathlib import Path
 
 KEY_COLS = 'data.contrast nuclei,data.contrast eosinophilic,data.condition,item.name,item.id,annotation.id,annotationelement.id'
 
@@ -194,6 +195,214 @@ def get_hubmap_url(hubmap_id):
     url = f"https://assets.hubmapconsortium.org/{uuid}/ometiff-pyramids/lab_processed/images/{omi_tiff_filename}"
     return url
 
+#----------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Fetch all related data from Hubmap and add it to local.
+def process_hubmap_dataset(hubmap_id):
+    """
+    Process HubMAP dataset get dataset_type and descendants info.
+    """
+    search_api = "https://search.api.hubmapconsortium.org/v3/search"
+    
+    # Get initial dataset
+    ds_payload = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"match": {"hubmap_id": hubmap_id}}
+                ]
+            }
+        },
+        "_source": ["dataset_type", "descendants", "hubmap_id", "uuid"],
+        "size": 1
+    }
+    
+    r = requests.post(search_api, json=ds_payload)
+    response_data = r.json()
+    
+    if not response_data['hits']['hits']:
+        return {"error": "No dataset found for the given hubmap_id"}
+    
+    source = response_data['hits']['hits'][0]['_source']
+    dataset_type = source.get('dataset_type')
+    descendants = source.get('descendants', [])
+    
+    result = {
+        "hubmap_id": hubmap_id,
+        "dataset_type": dataset_type,
+        "source": source
+    }
+    
+    # Mapping of dataset types to their target descendant types
+    target_mapping = {
+        "Histology": "Kaggle-1 Segmentation",
+        "Visium (no probes)": "Visium (no probes) [Salmon + Scanpy]"
+    }
+
+    if dataset_type in target_mapping:
+        target_dataset_type = target_mapping[dataset_type]
+        target_uuid = None
+        
+        # Look for the target dataset type in descendants
+        for desc in descendants:
+            if desc.get('dataset_type') == target_dataset_type:
+                target_uuid = desc.get('uuid')
+                break
+        
+        if target_uuid:
+            # Fetch descendant dataset details
+            desc_payload = {
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"match": {"uuid": target_uuid}}
+                        ]
+                    }
+                },
+                "_source": ["files", "uuid", "dataset_type"],
+                "size": 1
+            }
+            desc_r = requests.post(search_api, json=desc_payload)
+            desc_data = desc_r.json()
+            
+            if desc_data['hits']['hits']:
+                desc_source = desc_data['hits']['hits'][0]['_source']
+                result['descendant_uuid'] = target_uuid
+                result['descendant_files'] = desc_source.get('files', [])
+        else:
+            # List all descendant dataset types and uuids
+            result['available_descendants'] = [
+                {
+                    'dataset_type': desc.get('dataset_type'),
+                    'uuid': desc.get('uuid')
+                }
+                for desc in descendants
+            ]
+    
+    return result
+
+def download_files(uuid, files, base_dir="datasets"):
+
+    base_path = Path(base_dir) / uuid
+    
+    stats = {
+        "total_files": len(files),
+        "downloaded": 0,
+        "failed": 0,
+        "skipped": 0,
+        "total_size": 0,
+        "downloaded_size": 0,
+        "skipped_size": 0,
+        "failed_size": 0
+    }
+    
+    # Calculate total size
+    for file_info in files:
+        file_size = file_info.get('size', 0)
+        stats['total_size'] += file_size
+    
+    print(f"Total data to process: {format_size(stats['total_size'])}")
+    print("-" * 80)
+    
+    for file_info in files:
+        rel_path = file_info.get('rel_path')
+        file_size = file_info.get('size', 0)
+        description = file_info.get('description', 'No description')
+        
+        if not rel_path:
+            stats['skipped'] += 1
+            stats['skipped_size'] += file_size
+            continue
+        
+        # Create full local path
+        local_file_path = base_path / rel_path
+        
+        # Skip if file already exists
+        if local_file_path.exists():
+            print(f" Skipping (already exists): {rel_path}")
+            print(f"  Size: {format_size(file_size)}")
+            stats['skipped'] += 1
+            stats['skipped_size'] += file_size
+            continue
+        
+        local_file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        url = f"https://assets.hubmapconsortium.org/{uuid}/{rel_path}"
+        
+        try:
+            print(f" Downloading: {rel_path}")
+            print(f"  Description: {description}")
+            print(f"  Size: {format_size(file_size)}")
+            
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+            
+            with open(local_file_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            stats['downloaded'] += 1
+            stats['downloaded_size'] += file_size
+            print(f"  Successfully downloaded\n")
+            
+        except requests.exceptions.RequestException as e:
+            print(f"  Failed to download: {e}\n")
+            stats['failed'] += 1
+            stats['failed_size'] += file_size
+    return stats
+
+def format_size(bytes_size):
+    """
+    Convert bytes to human-readable format.
+    """
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if bytes_size < 1024.0:
+            return f"{bytes_size:.2f} {unit}"
+        bytes_size /= 1024.0
+    return f"{bytes_size:.2f} PB"
+
+def download_hubmap_processed_dataset(hubmap_id, base_dir="datasets"):
+
+    print(f"Processing HubMAP ID: {hubmap_id}")
+    result = process_hubmap_dataset(hubmap_id)
+    
+    if 'error' in result:
+        print(f"Error: {result['error']}")
+        return result
+    
+    print(f"Dataset type: {result['dataset_type']}")
+    
+    if 'descendant_files' in result:
+        uuid = result['descendant_uuid']
+        files = result['descendant_files']
+        
+        print(f"\nFound {len(files)} files for UUID: {uuid}")
+        print(f"Download location: {base_dir}/{uuid}/\n")
+        
+        stats = download_files(uuid, files, base_dir)
+        result['download_stats'] = stats
+        
+        print("=" * 80)
+        print("DOWNLOAD SUMMARY")
+        print("=" * 80)
+        print(f"Total files:           {stats['total_files']}")
+        print(f"Successfully downloaded: {stats['downloaded']} files ({format_size(stats['downloaded_size'])})")
+        print(f"Failed:                {stats['failed']} files ({format_size(stats['failed_size'])})")
+        print(f"Skipped (existing):    {stats['skipped']} files ({format_size(stats['skipped_size'])})")
+        print("-" * 80)
+        print(f"Total size processed:  {format_size(stats['total_size'])}")
+        print(f"Total downloaded:      {format_size(stats['downloaded_size'])}")
+        print("=" * 80)
+        
+    elif 'available_descendants' in result:
+        print("\nProcessed data is not available for this dataset. Would you like to download the available data instead?")
+        print("Available data:")
+        for desc in result['available_descendants']:
+            print(f"  - {desc['dataset_type']}: {desc['uuid']}")
+    
+    return result
+
+#----------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Fetch data from Athena
 def get_patient_id(gc, path):
     r = gc.get("resource/lookup", parameters={'path': path})
     return r['meta']['Patient']
@@ -264,5 +473,6 @@ def get_annotation_data(gc, path, annotation_name, columns=KEY_COLS):
     
 
     return df
+
 
 
