@@ -7,6 +7,45 @@ import requests
 from pathlib import Path
 import shutil
 
+
+def get_hubmap_url(hubmap_id):
+    search_api = "https://search.api.hubmapconsortium.org/v3/search"
+    ds_payload = {"_source": ["files"],
+        "query": {
+            "bool": {
+            "must": [
+                {"match": {"hubmap_id": hubmap_id}}
+            ]
+            }
+        }
+        }
+    r = requests.post(search_api, json=ds_payload)
+    r.raise_for_status()
+    #pprint(r.json())
+    json.dump(r.json(), open("response.json", "w"), indent=4)
+    hits = r.json()["hits"]["hits"]
+    if not hits:
+        raise ValueError(f"No dataset found for HuBMAP ID {hubmap_id}")
+    print(f'dataset found for HuBMAP ID {hubmap_id}')
+    src = hits[0]["_source"]
+    uuid = hits[0]["_id"]  # Fixed: get dataset ID
+    print("uuid: ", uuid)
+    
+    # Find the ome.tiff file in the specific path
+    omi_tiff_filename = None
+    for file in src["files"]:
+        if file["rel_path"].startswith("ometiff-pyramids/lab_processed/images/") and file["rel_path"].endswith(".ome.tif"):
+            omi_tiff_filename = file["rel_path"].split("/")[-1]
+            break
+    
+    if not omi_tiff_filename:
+        raise ValueError("No ome.tiff file found in ometiff-pyramids/lab_processed/images/")
+    
+    url = f"https://assets.hubmapconsortium.org/{uuid}/ometiff-pyramids/lab_processed/images/{omi_tiff_filename}"
+    return url
+
+
+
 def fetch_data(hubmap_id, all=False, histology=False, visium=False):
     """
     Fetch data files from HubMAP for a given dataset.
@@ -962,6 +1001,7 @@ def get_annotation_data(gc, path, annotation_name, columns=KEY_COLS):
     
 
     return df
+
 
 
 
