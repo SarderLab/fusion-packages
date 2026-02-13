@@ -15,6 +15,10 @@ dependencies = [
     "jupyter-server-proxy",
     "ipyleaflet>=0.19",
     "ipython",
+    "tifffile", 
+    "numpy",
+    "pathlib",
+    "shutil",
     "tqdm>=4.0"]
 requires-python = ">=3.9"
 authors = [
