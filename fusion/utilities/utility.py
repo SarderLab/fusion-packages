@@ -690,9 +690,9 @@ def file_exists(gc, folder_id, filename):
             return item.get('_id')
     return None
 
-def download_to_athena(gc, hubmap_id=None, user=None, file_path=None, file_paths=None,
+def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file_paths=None,
                        all=False, histology=False, visium=False, temp_download=False,
-                       folder_id=None, athena_url='https://athena.rc.ufl.edu/api/v1'):
+                       folder_id=None, athena_url='https://fusionpub.rc.ufl.edu//api/v1'):
     """
     Download files to Athena from HubMAP or local files.
     

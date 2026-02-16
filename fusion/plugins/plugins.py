@@ -1,4 +1,4 @@
-from fusion.utilities.utility import download_to_athena
+from fusion.utilities.utility import download_to_fusion_backend
 import tifffile
 import numpy as np
     
@@ -83,7 +83,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     
     # Upload to Athena using the utility function
     #print("Uploading file(s) to Fusion backend...")
-    upload_result = download_to_athena(
+    upload_result = download_to_fusion_backend(
         gc=gc,
         hubmap_id=hubmap_id,
         user=user_name,
