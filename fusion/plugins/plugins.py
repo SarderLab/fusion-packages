@@ -95,7 +95,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     }
     },
         '6': {
-        'name': 'STU Spot Aggregation',
+        'name': 'FTU Spot Aggregation',
         'path': ["sarderlab/fusion_v1", "FTUSpotAggregation", "Aggregate"], 
         'input_param': 'input_image',
         'params': { 
@@ -110,7 +110,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     
     # Upload to Athena using the utility function
     #print("Uploading file(s) to Fusion backend...")
-    upload_result = run_analysis_tasks_fusion_backend(
+    upload_result = download_to_fusion_backend(
         gc=gc,
         hubmap_id=hubmap_id,
         user=user_name,
