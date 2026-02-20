@@ -58,7 +58,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
         },
         '3': {
         'name': 'Feature Extraction',
-        'path': ["sarderlab/fusion1", "CombinedFE", "ExpandedGranularFeatures"], 
+        'path': ["sarderlab/fusion1", "PathomicFeatureExtraction", "PathomicsFE"], 
         'input_param': 'input_image',
         'params': {
                 'type': 'Feature_Pipeline',  
@@ -73,6 +73,33 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
                 'replace_annotations': True,
                 'returnXlsx': False
         }
+    },
+        '4': {
+        'name': 'Label Transfer (10X Visium - step 1)',
+        'path': ["sarderlab/fusion_v1", "10X_VisiumAnalysis", "LabelTransfer"],
+        'input_param': 'input_image',
+        'params': {
+            'organ': 'KPMP Atlas Kidney', 
+            'reference': '697baf5f13bbccd3003a6435'
+        }
+    },
+        '5': {
+        'name': 'Spot Annotation (10X Visium - step 2)',
+        'path': ["sarderlab/fusion_v1", "10X_VisiumAnalysis", "SpotAnnotation"],
+        'input_param': 'input_file',
+        'params': {
+            'cell_reference_file': '69892c0b7d7fb0fd9933751f', 
+            'gene_list_file': '',
+            'scale_factors': '',
+            'spot_coords': ''
+    }
+    },
+        '6': {
+        'name': 'STU Spot Aggregation',
+        'path': ["sarderlab/fusion_v1", "FTUSpotAggregation", "Aggregate"], 
+        'input_param': 'input_image',
+        'params': { 
+        }
     }
     }
     if job_choice not in job_configs:
@@ -83,7 +110,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     
     # Upload to Athena using the utility function
     #print("Uploading file(s) to Fusion backend...")
-    upload_result = download_to_fusion_backend(
+    upload_result = run_analysis_tasks_fusion_backend(
         gc=gc,
         hubmap_id=hubmap_id,
         user=user_name,
@@ -186,8 +213,22 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
                     'girderApiUrl': 'https://fusionpub.rc.ufl.edu/api/v1', 
                     'girderToken': gc.token  
                 }
-                # Add job-specific parameters
+                # Load defaults from config FIRST
                 params.update(selected_job['params'])
+
+                # Handle Option 4 (Label Transfer) Overrides
+                if job_choice == '4':
+                    counts_id = input(f"Enter Girder ID for counts_file corresponding to {wsi['name']}: ")
+                    params['counts_file'] = counts_id
+
+                # Handle Option 6 (STU Spot Aggregation) Overrides
+                elif job_choice == '6':
+                    print(f"--- Settings for {wsi['name']} ---")
+                    base_ann = input("Enter 'base_annotation' layer name (e.g., Spots): ")
+                    agg_ann = input("Enter 'agg_annotation' layer names (comma-separated, e.g., glomeruli,tubules): ")
+                    
+                    params['base_annotation'] = base_ann
+                    params['agg_annotation'] = agg_ann
                 
                 r = gc.post(run_endpoint, parameters=params)
                 print(f"Job submitted. job_id={r['_id']}")
@@ -237,63 +278,3 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     except Exception as e:
         print(f"Error submitting job: {e}")
         return {"error": str(e)}
-
-def get_job_status(gc, job_id):
-    """
-    Get the status of a job by its ID.
-    """
-    # Status mapping
-    status_map = {
-        3: "completed",
-        2: "in progress",
-        0: "inactive",
-        4: "failed, error",
-        5: "failed, canceled"
-    }
-
-    job = gc.get(f'job/{job_id}')
-    # Get and map status
-    status_code = job.get('status')
-    status = status_map.get(status_code, 'unknown')
-    
-
-    return status
-
-def poll_job_status(gc, job_id):
-
-    start_time = time.time()
-    max_progress = 100
-    interval=1
-    timeout=1500
-
-    # Create a progress bar
-    bar = tqdm(total=max_progress, desc=f"Job_id: {job_id}", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}")
-
-    progress = 0
-
-    while True:
-        status = get_job_status(gc, job_id)
-
-        if status == "completed":
-            bar.n = max_progress
-            bar.refresh()
-            bar.close()
-            print("\nJob finished successfully!")
-            break
-        elif status.startswith("failed"):
-            bar.close()
-            print(f"\nJob failed ({status})")
-            break
-        elif status == "in progress":
-            progress = min(progress + 1, max_progress - 1)
-            bar.n = progress
-            bar.refresh()
-
-        # Timeout check
-        if time.time() - start_time > timeout:
-            bar.close()
-            print("\nPolling timed out")
-            break
-
-        time.sleep(interval)
-
