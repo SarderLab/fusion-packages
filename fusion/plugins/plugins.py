@@ -4,6 +4,84 @@ import numpy as np
 import os
 import subprocess
 import re
+import shutil
+
+def check_job_status():
+    """
+    Asks the user for a Job ID and checks its status.
+    """
+    # Get Job ID from user
+    job_id = input("Enter Job ID to check: ").strip()
+    
+    if not job_id:
+        print("No Job ID entered.")
+        return
+
+    print(f"\nChecking status for Job ID: {job_id}...")
+    print("-" * 30)
+
+    # --- STEP 1: Check if job is currently active (squeue) ---
+    try:
+        result = subprocess.run(
+            ['squeue', '-j', job_id, '-h', '-o', '%t'], 
+            capture_output=True, 
+            text=True
+        )
+        
+        state_code = result.stdout.strip()
+
+        if state_code:
+            if state_code == 'R':
+                print(f"Status: \033[92mRUNNING\033[0m") # Green text
+                print("The job is currently processing.")
+                return
+            elif state_code == 'PD':
+                print(f"Status: \033[93mIN QUEUE (PENDING)\033[0m") # Yellow text
+                print("Waiting for resources to become available.")
+                return
+            elif state_code == 'CG':
+                print(f"Status: \033[94mCOMPLETING\033[0m") # Blue text
+                print("The job is finishing up.")
+                return
+            else:
+                print(f"Status: ACTIVE (State: {state_code})")
+                return
+                
+    except Exception:
+        pass
+
+    # --- STEP 2: If not in squeue, check history (sacct) ---
+    try:
+        result = subprocess.run(
+            ['sacct', '-j', job_id, '-n', '-o', 'State'], 
+            capture_output=True, 
+            text=True
+        )
+        
+        output = result.stdout.strip()
+        
+        if output:
+            if 'COMPLETED' in output:
+                print(f"Status: \033[92mSUCCESSFUL\033[0m")
+            elif 'FAILED' in output:
+                print(f"Status: \033[91mFAILED\033[0m") 
+                print("The job terminated with an error.")
+            elif 'TIMEOUT' in output:
+                print(f"Status: \033[91mFAILED (TIMEOUT)\033[0m")
+                print("The job ran out of time.")
+            elif 'CANCELLED' in output:
+                print(f"Status: \033[91mCANCELLED\033[0m")
+                print("The job was stopped manually.")
+            else:
+                clean_state = output.split()[0]
+                print(f"Status: FINISHED ({clean_state})")
+        else:
+            print("Status: UNKNOWN")
+            print("Job ID not found.")
+            
+    except Exception:
+        print("Error! Unable to retrieve job status.")
+
 
 def get_hive_workspace_root():
     """
@@ -209,10 +287,6 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
         print("Error: 'sbatch' command not found. Are you on a cluster login node?")
 
     return script_filename
-
-
-run_apptainer_analysis()
-
 
 def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=None, file_paths=None):
     """
@@ -491,3 +565,4 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
         print(f"Error submitting job: {e}")
 
         return {"error": str(e)}
+
