@@ -1,7 +1,219 @@
 from fusion.utilities.utility import download_to_fusion_backend
 import tifffile
 import numpy as np
+import os
+import subprocess
+import re
+
+def get_hive_workspace_root():
+    """
+    Parses the current working directory to find the Hive workspace root.
+    Logic: Looks for '/user-workspaces/', takes the next two segments (username/id),
+    and ignores everything after that.
+    """
+    current_path = os.getcwd()
+    parts = current_path.split(os.sep)
     
+    # Look for the 'user-workspaces' segment
+    if 'user-workspaces' in parts:
+        try:
+            # Find where 'user-workspaces' is located
+            idx = parts.index('user-workspaces')
+            
+            # We need 'user-workspaces' + username + workspace_id
+            # This requires at least 3 segments starting from 'user-workspaces'
+            if len(parts) >= idx + 3:
+                # Construct the path up to the workspace_id
+                # parts[:idx+3] includes everything up to and including the ID
+                workspace_root = os.sep.join(parts[:idx+3])
+                return workspace_root
+        except Exception as e:
+            print(f"Error parsing path: {e}")
+            
+    # Fallback if structure isn't found
+    print(f"Warning: 'user-workspaces' structure not found in {current_path}.")
+    return current_path
+
+def run_apptainer_analysis():
+    """
+    Interactive function to generate and submit analysis tasks using Apptainer containers via Slurm.
+    """
+    # Container image mapping with their specific parameters
+    container_configs = {
+        "multicompartment_segmentation": {
+            "image": "dsrithad/fusion1_decoupled:multicompartment-segmentation-notebook",
+            "script": "/opt/MultiC/test_decoupled.py",
+            "params": ["input_file", "modelfile", "output_dir"]
+        },
+        "spatial_aggregation": {
+            "image": "dsrithad/spatial-aggregation-notebook:v1",
+            "script": "/data/run_aggregation.py",
+            "params": []  
+        }
+    }
+
+    # Display available analysis options
+    print("Available Analysis Tasks:")
+    print("-" * 30)
+    for i, (key, config) in enumerate(container_configs.items(), 1):
+        print(f"{i}. {key.replace('_', ' ').title()}")
+
+    # Get user selection for analysis type
+    while True:
+        try:
+            choice = int(input(f"\nSelect analysis task (1-{len(container_configs)}): "))
+            if 1 <= choice <= len(container_configs):
+                analysis_type = list(container_configs.keys())[choice - 1]
+                config = container_configs[analysis_type]
+                break
+            else:
+                print(f"Please enter a number between 1 and {len(container_configs)}")
+        except ValueError:
+            print("Please enter a valid number")
+
+    print(f"\nSelected: {analysis_type.replace('_', ' ').title()}")
+    print(f"Container: {config['image']}")
+
+    # Get parameters specific to this container
+    user_params = {}
+    if config['params']:
+        print(f"\nRequired parameters for {analysis_type.replace('_', ' ').title()}:")
+        print("-" * 40)
+        for param in config['params']:
+            while True:
+                if param == 'output_dir':
+                    value = input(f"Enter {param} (output directory path): ").strip()
+                else:
+                    value = input(f"Enter {param} path: ").strip()
+                
+                if value:
+                    user_params[param] = value
+                    break
+                else:
+                    print(f"{param} is required. Please enter a value.")
+    else:
+        print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
+
+    # Ask for Job Name
+    job_name_input = input("\nEnter job name (default: analysis_job): ").strip()
+    job_name = job_name_input if job_name_input else "analysis_job"
+
+    # Hardcoded Resources
+    time_limit = "01:00:00"
+    mem_limit = "8gb"
+    
+    # DETERMINE WORKSPACE ROOT AUTOMATICALLY
+    workspace_path = get_hive_workspace_root()
+    mount_point = "/data"
+    
+    print(f"\nDetected Workspace Root: {workspace_path}")
+    print(f"Mounting: {workspace_path} -> {mount_point}")
+
+    apptainer_cmd_parts = [
+        "apptainer exec",
+        f"-B {workspace_path}:{mount_point}",
+        f"docker://{config['image']}",
+        f"python {config['script']}"
+    ]
+
+    # Add parameters to the apptainer command
+    for param_name, param_value in user_params.items():
+        if param_value is not None:
+            if param_name == 'output_dir':
+                apptainer_cmd_parts.append(f"--{param_name} {mount_point}/{param_value}")
+            elif param_name in ['input_file', 'modelfile']:
+                apptainer_cmd_parts.append(f"--{param_name} {mount_point}/{param_value}")
+            else:
+                apptainer_cmd_parts.append(f"--{param_name} {param_value}")
+        else:
+            apptainer_cmd_parts.append(f"--{param_name}")
+            
+    apptainer_command = " \\\n  ".join(apptainer_cmd_parts)
+
+    # --- DETERMINE FILE PATHS FOR SCRIPT AND LOGS ---
+    # Default to current directory if no input file is present
+    target_dir = os.getcwd()
+    
+    # If input_file exists, we want to save the script in that directory
+    if 'input_file' in user_params:
+        # User input path is relative to the workspace root
+        relative_input_path = user_params['input_file']
+        # Construct the absolute path on the host system
+        clean_relative_path = relative_input_path.lstrip(os.sep).lstrip('.')
+        full_input_path = os.path.join(workspace_path, clean_relative_path)
+        
+        # Get the directory containing the input file
+        target_dir = os.path.dirname(full_input_path)
+        
+        # Check if this directory actually exists on the host
+        if not os.path.exists(target_dir):
+            print(f"Warning: Calculated directory {target_dir} does not exist. Saving to current dir.")
+            target_dir = os.getcwd()
+
+    script_filename = os.path.join(target_dir, f"{job_name}_submit.sh")
+    log_filename = os.path.join(target_dir, f"{job_name}_%j.log")
+
+    # create a submission script content
+    slurm_script_content = f"""#!/bin/bash
+#SBATCH --job-name={job_name}
+#SBATCH --output={log_filename}
+#SBATCH --time={time_limit}
+#SBATCH --mem={mem_limit}
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+
+echo "Starting job on $(hostname)"
+module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
+
+{apptainer_command}
+"""
+    
+    print("\n" + "="*60)
+    print(f"GENERATING SUBMISSION SCRIPT: {script_filename}")
+    print(f"LOG FILES WILL BE SAVED TO: {log_filename}")
+    print("="*60)
+    
+    # Write the script to file
+    try:
+        with open(script_filename, 'w') as f:
+            f.write(slurm_script_content)
+    except IOError as e:
+        print(f"Error writing script to {target_dir}. Falling back to current directory.")
+        target_dir = os.getcwd()
+        script_filename = os.path.join(target_dir, f"{job_name}_submit.sh")
+        with open(script_filename, 'w') as f:
+            f.write(slurm_script_content)
+
+    print(f"Script saved. Submitting via sbatch...")
+    
+    # Submit the job
+    try:
+        result = subprocess.run(['sbatch', script_filename], check=True, capture_output=True, text=True)
+        output = result.stdout.strip()
+        print(f"Success! {output}")
+        
+        # Parse Job ID to give user the status command
+        match = re.search(r"Submitted batch job (\d+)", output)
+        if match:
+            job_id = match.group(1)
+            print("\n" + "-"*40)
+            print("CHECK JOB STATUS:")
+            print("-" * 40)
+            print(f"To check the status of this specific job, run:")
+            print(f"\033[1m  !squeue -j {job_id} \033[0m")
+            print("-" * 40)
+            
+    except subprocess.CalledProcessError as e:
+        print(f"Error submitting job: {e.stderr}")
+    except FileNotFoundError:
+        print("Error: 'sbatch' command not found. Are you on a cluster login node?")
+
+    return script_filename
+
+
+run_apptainer_analysis()
+
+
 def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=None, file_paths=None):
     """
     Run multi-compartment segmentation on image(s) from HubMAP or local file(s).
@@ -277,4 +489,5 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
         
     except Exception as e:
         print(f"Error submitting job: {e}")
+
         return {"error": str(e)}
