@@ -314,82 +314,81 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     print("1. Multi-Compartment Segmentation")
     print("2. Frozen Glomerulus Segmentation")
     print("3. Feature Extraction")
+    print("4. Label Transfer (10X Visium - step 1)")
+    print("5. Spot Annotation (10X Visium - step 2)")  
+    print("6. FTU Spot Aggregation") 
     print(f"{'='*80}")
     
-    job_choice = input("Enter your choice (1/2/3): ").strip()
+    job_choice = input("Enter your choice (1/2/3/4/5/6): ").strip()
     
     # Define job configurations
     job_configs = {
-        '1': {
-            'name': 'Multi-Compartment Segmentation',
-            'path': ["sarderlab/fusion1", "Multic", "MultiCompartmentSegment"],
-            'input_param': 'input_file',
-            'params': {
-                'modelfile': '6967ee7b413ffaf54798bc8e'
-            }
-        },
-        '2': {
-            'name': 'Frozen Glomerulus Segmentation',
-            'path': ["tatkeanish/fusion_v1", "frozen_glom_segmentation", "GlomSeg"],
-            'input_param': 'input_file',
-            'params': {
-                'modelfile': '6967ef12413ffaf54798bc91',
-                'num_classes': 2,
-                'threshold': 0.5,
-                'batch_size': 8,
-                'region_size': 512,
-                'step_size': 256,
-                'num_workers': 4
-            }
-        },
-        '3': {
-        'name': 'Feature Extraction',
-        'path': ["sarderlab/fusion1", "PathomicFeatureExtraction", "PathomicsFE"], 
-        'input_param': 'input_image',
+    '1': {
+        'name': 'Multi-Compartment Segmentation',
+        'path': ["sarderlab/fusion_v1","MultiCompartmentSegmentation", "MultiC"],
+        'input_param': 'input_file',
         'params': {
-                'type': 'Feature_Pipeline',  
-                'threshold_nuclei': 200,
-                'minsize_nuclei': 20,
-                'threshold_PAS': 50,
-                'minsize_PAS': 20,
-                'threshold_LS': 0,
-                'minsize_LS': 0,
-                'ignoreAnns': '',
-                'rename': True,
-                'replace_annotations': True,
-                'returnXlsx': False
+            'modelfile': '6967ee7b413ffaf54798bc8e'
         }
     },
-        '4': {
+    '2': {
+        'name': 'Frozen Glomerulus Segmentation',
+        'path': ["sarderlab/fusion_v1", "FrozenGlomSegmentation", "GlomSeg"],
+        'input_param': 'input_image',
+        'params': {
+            'model_file': '6967ef12413ffaf54798bc91',
+            'num_classes': 2,
+            'threshold': 0.5,
+            'batch_size': 8,
+            'region_size': 512,
+            'step_size': 256,
+            'num_workers': 4
+        }
+    },
+    '3': {
+        'name': 'Feature Extraction',
+        'path': ["sarderlab/fusion_v1", "PathomicFeatureExtraction", "PathomicsFE"],
+        'input_param': 'input_image',
+        'params': {
+            'type': 'Feature_Pipeline',
+            'threshold_nuclei': 200,
+            'minsize_nuclei': 20,
+            'threshold_PAS': 50,
+            'minsize_PAS': 20,
+            'threshold_LS': 0,
+            'minsize_LS': 0,
+            'ignoreAnns': '',
+            'rename': True,
+            'replace_annotations': True,
+            'returnXlsx': False
+        }
+    },
+    '4': {
         'name': 'Label Transfer (10X Visium - step 1)',
         'path': ["sarderlab/fusion_v1", "10X_VisiumAnalysis", "LabelTransfer"],
         'input_param': 'input_image',
         'params': {
-            'organ': 'KPMP Atlas Kidney', 
+            'organ': 'KPMP Atlas Kidney',
             'reference': '697baf5f13bbccd3003a6435'
         }
     },
-        '5': {
+    '5': {
         'name': 'Spot Annotation (10X Visium - step 2)',
         'path': ["sarderlab/fusion_v1", "10X_VisiumAnalysis", "SpotAnnotation"],
         'input_param': 'input_file',
         'params': {
-            'cell_reference_file': '69892c0b7d7fb0fd9933751f', 
-            'gene_list_file': '',
-            'scale_factors': '',
-            'spot_coords': ''
-    }
-    },
-        '6': {
-        'name': 'FTU Spot Aggregation',
-        'path': ["sarderlab/fusion_v1", "FTUSpotAggregation", "Aggregate"], 
-        'input_param': 'input_image',
-        'params': { 
+            'cell_reference_file': '69892c0b7d7fb0fd9933751f'
         }
+    },
+    '6': {
+        'name': 'FTU Spot Aggregation',
+        'path': ["sarderlab/fusion_v1", "FTUSpotAggregation", "Aggregate"],
+        'input_param': 'input_image',
+        'params': {}
     }
-    }
+   }
     if job_choice not in job_configs:
-        print("Invalid choice. Please enter 1,2 or 3.")
+        print("Invalid choice. Please enter 1,2,3,4,5 or 6.")
         return {"error": "Invalid job selection"}
     
     selected_job = job_configs[job_choice]
@@ -496,7 +495,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
             try:
                 params = {
                     selected_job['input_param']: wsi['file_id'],
-                    'girderApiUrl': 'https://fusionpub.rc.ufl.edu/api/v1', 
+                    'girderApiUrl': 'http://girder:8080/api/v1/',
                     'girderToken': gc.token  
                 }
                 # Load defaults from config FIRST
@@ -563,6 +562,4 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
         
     except Exception as e:
         print(f"Error submitting job: {e}")
-
         return {"error": str(e)}
-
