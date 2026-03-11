@@ -17,6 +17,12 @@ def visualize_wsi(gc, hubmap_id=None, item_id=None, user=None):
         IFrame with HistomicUI viewer for selected file
     """
     
+    if not item_id and not hubmap_id:
+        if user:
+            return IFrame("https://fusionpub.rc.ufl.edu/histomics", "100%", "800px")
+        else:
+            raise ValueError("Please provide a user parameter.")
+    
     # Case 1: item_id provided - direct visualization
     if item_id:
         print("Visualizing item in HistomicUI...")
@@ -34,7 +40,7 @@ def visualize_wsi(gc, hubmap_id=None, item_id=None, user=None):
         raise ValueError("Please provide either a hubmap_id or an item_id")
     
     if not user:
-        raise ValueError("Please provide a user parameter for Athena folder creation")
+        raise ValueError("Please provide a user parameter.")
     
     print(f"Fetching and uploading data for HubMAP ID: {hubmap_id}")
     
