@@ -116,17 +116,73 @@ def run_apptainer_analysis():
     """
     Interactive function to generate and submit analysis tasks using Apptainer containers via Slurm.
     """
-    # Container image mapping with their specific parameters
+    # Container image mapping with their specific parameters.
+    # output_dir is auto-derived from the primary input path — do not add it to params.
+    # path_params: params that get the /data/ mount prefix in the container command.
+    # fixed_params: hardcoded values appended to the command without prompting.
+    # primary_input: the prompted param used to derive the dataset root folder.
+    # input_depth: how many os.path.dirname() calls from primary_input reach the dataset root.
+    # output_subdir: subfolder under dataset root used as output_dir.
+    # annotations_subdir: if set, also auto-derives --annotations_dir for that subfolder.
     container_configs = {
         "multicompartment_segmentation": {
             "image": "dsrithad/fusion1_decoupled:multicompartment-segmentation-notebook",
-            "script": "/opt/MultiC/test_decoupled.py",
-            "params": ["input_file", "modelfile", "output_dir"]
+            "script": "/opt/MultiC/multic/cli/MultiC/MultiCLocal.py",
+            "params": ["input_file", "modelfile"],
+            "path_params": {"input_file", "modelfile", "output_dir"},
+            "output_subdir": "Segmented_FTU",
+            "primary_input": "input_file",
+            "input_depth": 2
+        },
+        "frozen_glom_segmentation": {
+            "image": "dsrithad/fusion1_decoupled:frozenglom-segmentation-notebook",
+            "script": "/opt/GlomSegmentation/FrozenGlomSegmentation/cli/GlomSeg/GlomSegLocal.py",
+            "params": ["input_image", "model_file"],
+            "path_params": {"input_image", "model_file", "output_dir"},
+            "output_subdir": "Segmented_FTU",
+            "primary_input": "input_image",
+            "input_depth": 2
+        },
+        "feature_extraction": {
+            "image": "dsrithad/fusion1_decoupled:feature-extraction-notebook",
+            "script": "/opt/FExtract/fextract/cli/PathomicsFE/PathomicsFELocal.py",
+            "params": ["input_image"],
+            "path_params": {"input_image", "annotations_dir", "output_dir"},
+            "output_subdir": "Files",
+            "annotations_subdir": "Segmented_FTU",
+            "primary_input": "input_image",
+            "input_depth": 2
+        },
+        "label_transfer": {
+            "image": "dsrithad/fusion1_decoupled:10x-visium-analysis-notebook",
+            "script": "/opt/Visium_Analysis/Visium_Analysis/cli/LabelTransferLocal/LabelTransferLocal.py",
+            "params": ["counts_file", "reference"],
+            "path_params": {"counts_file", "reference", "output_dir"},
+            "fixed_params": {
+                "organ": "KPMP Atlas Kidney"
+            },
+            "output_subdir": "Files",
+            "primary_input": "counts_file",
+            "input_depth": 1
+        },
+        "spot_annotation": {
+            "image": "dsrithad/fusion1_decoupled:10x-visium-analysis-notebook",
+            "script": "/opt/Visium_Analysis/Visium_Analysis/cli/SpotAnnotationLocal/SpotAnnotationLocal.py",
+            "params": ["input_file", "cell_reference_file"],
+            "path_params": {"input_file", "cell_reference_file", "output_dir"},
+            "fixed_params": {},
+            "output_subdir": "Files",
+            "primary_input": "input_file",
+            "input_depth": 2
         },
         "spatial_aggregation": {
-            "image": "dsrithad/spatial-aggregation-notebook:v1",
-            "script": "/data/run_aggregation.py",
-            "params": []  
+            "image": "dsrithad/fusion1_decoupled:spatial-aggregation-notebook",
+            "script": "/opt/Spatial-Omics-Plugins/SpatialAggregation/cli/Aggregate/AggregateLocal.py",
+            "params": ["base_annotation", "agg_annotations"],
+            "path_params": {"base_annotation", "agg_annotations", "output_dir"},
+            "output_subdir": "Aggregated_FTU",
+            "primary_input": "base_annotation",
+            "input_depth": 1
         }
     }
 
@@ -159,11 +215,10 @@ def run_apptainer_analysis():
         print("-" * 40)
         for param in config['params']:
             while True:
-                if param == 'output_dir':
-                    value = input(f"Enter {param} (output directory path): ").strip()
+                if param == 'agg_annotations':
+                    value = input(f"Enter {param} paths (space-separated): ").strip()
                 else:
                     value = input(f"Enter {param} path: ").strip()
-                
                 if value:
                     user_params[param] = value
                     break
@@ -171,6 +226,21 @@ def run_apptainer_analysis():
                     print(f"{param} is required. Please enter a value.")
     else:
         print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
+
+    # Auto-derive output_dir (and annotations_dir if needed) from the primary input path.
+    # The primary input is something like: fusion_demo_notebooks/datasets/HBM355.CWFF.355/ometiff-pyramids/file.tif
+    # Going up input_depth levels reaches the dataset root folder.
+    primary = config.get('primary_input')
+    if primary and primary in user_params:
+        rel_input = user_params[primary].lstrip(os.sep).lstrip('.')
+        dataset_root = rel_input
+        for _ in range(config.get('input_depth', 2)):
+            dataset_root = os.path.dirname(dataset_root)
+        user_params['output_dir'] = f"{dataset_root}/{config['output_subdir']}"
+        print(f"\nAuto-derived output directory: /data/{user_params['output_dir']}")
+        if 'annotations_subdir' in config:
+            user_params['annotations_dir'] = f"{dataset_root}/{config['annotations_subdir']}"
+            print(f"Auto-derived annotations directory: /data/{user_params['annotations_dir']}")
 
     # Ask for Job Name
     job_name_input = input("\nEnter job name (default: analysis_job): ").strip()
@@ -194,17 +264,21 @@ def run_apptainer_analysis():
         f"python {config['script']}"
     ]
 
-    # Add parameters to the apptainer command
+    # Add user-provided and auto-derived parameters to the apptainer command.
+    # path_params are prefixed with the container mount point (/data).
+    path_params = config.get('path_params', set())
     for param_name, param_value in user_params.items():
         if param_value is not None:
-            if param_name == 'output_dir':
-                apptainer_cmd_parts.append(f"--{param_name} {mount_point}/{param_value}")
-            elif param_name in ['input_file', 'modelfile']:
+            if param_name in path_params:
                 apptainer_cmd_parts.append(f"--{param_name} {mount_point}/{param_value}")
             else:
                 apptainer_cmd_parts.append(f"--{param_name} {param_value}")
         else:
             apptainer_cmd_parts.append(f"--{param_name}")
+
+    # Add fixed (hardcoded) params — values are already fully-specified container paths.
+    for param_name, param_value in config.get('fixed_params', {}).items():
+        apptainer_cmd_parts.append(f"--{param_name} {param_value}")
             
     apptainer_command = " \\\n  ".join(apptainer_cmd_parts)
 
@@ -212,10 +286,11 @@ def run_apptainer_analysis():
     # Default to current directory if no input file is present
     target_dir = os.getcwd()
     
-    # If input_file exists, we want to save the script in that directory
-    if 'input_file' in user_params:
+    # Save the script next to the primary input file
+    primary = config.get('primary_input', 'input_file')
+    if primary in user_params:
         # User input path is relative to the workspace root
-        relative_input_path = user_params['input_file']
+        relative_input_path = user_params[primary]
         # Construct the absolute path on the host system
         clean_relative_path = relative_input_path.lstrip(os.sep).lstrip('.')
         full_input_path = os.path.join(workspace_path, clean_relative_path)
