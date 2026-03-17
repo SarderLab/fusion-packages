@@ -82,81 +82,89 @@ def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
         print(f"To reconnect:  check_job_status('{job_id}')")
 
 
-def check_job_status(job_id=None):
+def check_job_status(job_id=None, mode=None):
     """
-    Check a Slurm job's current status and tail its log output.
-    If the job is still running, offers to stream live output.
+    Monitor Slurm job status.
 
-    Can be called with a job_id directly, or with no args to be prompted.
-    Job name and log path are looked up automatically if the job was submitted
-    in this session via run_apptainer_analysis().
+    Default (no arguments): shows a live-refreshing squeue view for all your jobs
+    (like `watch -n 2 squeue -u $USER`), with a status-code legend. Press Ctrl+C to stop.
+
+    Pass mode='live_logs' (and optionally a job_id) to tail live log output for a
+    specific job instead.
+
+    Examples:
+        check_job_status()                       # watch all your jobs
+        check_job_status('12345', 'live_logs')   # stream logs for job 12345
     """
-    if job_id is None:
-        job_id = input("Enter Job ID to check: ").strip()
-    if not job_id:
-        print("No Job ID entered.")
+    if mode == 'live_logs':
+        if job_id is None:
+            job_id = input("Enter Job ID: ").strip()
+        if not job_id:
+            print("No Job ID entered.")
+            return
+        job_id = str(job_id)
+        info = _SLURM_JOBS.get(job_id, {})
+        job_name = info.get('name', f'job_{job_id}')
+        log_path = info.get('log')
+        if not log_path:
+            log_path = input(
+                f"Log path not found for job {job_id}.\nEnter log path (or press Enter to skip): "
+            ).strip() or None
+        _stream_slurm_log(job_id, job_name, log_path, poll_interval=10)
         return
 
-    job_id = str(job_id)
-    info = _SLURM_JOBS.get(job_id, {})
-    job_name = info.get('name', f'job_{job_id}')
-    log_path  = info.get('log')
+    # ── Default: watch-style squeue view ────────────────────────────────────
+    STATUS_LEGEND = [
+        ("PD",  "PENDING    — waiting for resources or dependencies"),
+        ("R",   "RUNNING    — currently executing on a node"),
+        ("CG",  "COMPLETING — finishing up (almost done)"),
+        ("S",   "SUSPENDED  — job has been suspended"),
+        ("ST",  "STOPPED    — job has been stopped"),
+        ("F",   "FAILED     — job exited with a non-zero code"),
+        ("CA",  "CANCELLED  — job was cancelled by user or admin"),
+        ("TO",  "TIMEOUT    — job exceeded its time limit"),
+        ("NF",  "NODE_FAIL  — a compute node failed"),
+    ]
 
-    # Current Slurm state + elapsed time
-    r = subprocess.run(['squeue', '-j', job_id, '-h', '-o', '%t %M'],
-                       capture_output=True, text=True)
-    parts = r.stdout.strip().split()
-    state   = parts[0] if parts else ''
-    elapsed = parts[1] if len(parts) > 1 else '?'
+    try:
+        from IPython.display import clear_output
+        use_clear = True
+    except ImportError:
+        use_clear = False
 
-    state_labels = {'R': 'RUNNING', 'PD': 'PENDING', 'CG': 'COMPLETING'}
+    user = os.environ.get('USER') or os.environ.get('LOGNAME') or ''
+    squeue_cmd = ['squeue', '--format=%.10i %.12P %.30j %.8T %.10M %.9l %R']
+    if user:
+        squeue_cmd = ['squeue', '-u', user, '--format=%.10i %.12P %.30j %.8T %.10M %.9l %R']
 
-    if state:
-        label = state_labels.get(state, state)
-        print(f"\nJob {job_id} ({job_name}) — {label}  [{elapsed} elapsed]")
-    else:
-        r2 = subprocess.run(['sacct', '-j', job_id, '-n', '-o', 'State'],
-                            capture_output=True, text=True)
-        output = r2.stdout.strip()
-        if 'COMPLETED' in output:
-            final = 'COMPLETED ✓'
-        elif 'FAILED' in output:
-            final = 'FAILED ✗'
-        elif 'TIMEOUT' in output:
-            final = 'TIMEOUT ✗'
-        elif 'CANCELLED' in output:
-            final = 'CANCELLED'
-        else:
-            final = output.split()[0] if output else 'UNKNOWN (job not found)'
-        print(f"\nJob {job_id} ({job_name}) — {final}")
+    print("Watching job queue — Ctrl+C to stop\n")
+    try:
+        while True:
+            r = subprocess.run(squeue_cmd, capture_output=True, text=True)
+            output = r.stdout.strip()
 
-    # Show last 10 lines of the log
-    if log_path and os.path.exists(log_path):
-        print(f"\nLast 10 lines of log:")
-        print("─" * 55)
-        try:
-            with open(log_path, 'r') as f:
-                lines = f.readlines()
-            for line in lines[-10:]:
-                print(f"  {line}", end='')
-            if lines and not lines[-1].endswith('\n'):
+            if use_clear:
+                clear_output(wait=True)
+
+            print(f"[{time.strftime('%H:%M:%S')}]  squeue -u $USER  (refreshing every 2s — Ctrl+C to stop)\n")
+            print(output if output else "(no jobs currently in queue)")
+            print()
+            print("─" * 60)
+            print("Status codes:")
+            for code, desc in STATUS_LEGEND:
+                print(f"  {code:<4}  {desc}")
+            if _SLURM_JOBS:
                 print()
-        except Exception:
-            pass
-        print("─" * 55)
-    elif log_path:
-        print(f"\nLog file not yet available: {log_path}")
-    else:
-        print("\nLog path unknown — job may have been submitted in a previous session.")
+                print("Jobs submitted this session:")
+                for jid, info in _SLURM_JOBS.items():
+                    print(f"  {jid}  {info['name']}  →  log: {info.get('log', 'unknown')}")
+            print()
+            print("To stream live logs:  check_job_status('<job_id>', 'live_logs')")
 
-    # If still active, offer to stream live
-    if state:
-        try:
-            stream = input("\nStream live from here? (y/n): ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            stream = 'n'
-        if stream == 'y':
-            _stream_slurm_log(job_id, job_name, log_path, poll_interval=10)
+            time.sleep(2)
+
+    except KeyboardInterrupt:
+        print("\nStopped watching.")
 
 
 
@@ -517,7 +525,26 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
         match = re.search(r"Submitted batch job (\d+)", output)
         if match:
             job_id = match.group(1)
-            _track_slurm_job(job_id, job_name, log_filename)
+            log_path = log_filename.replace('%j', job_id)
+
+            _SLURM_JOBS[job_id] = {
+                'name':  job_name,
+                'log':   log_path,
+                'start': time.time(),
+            }
+
+            w = 53
+            print(f"\n┌{'─' * w}┐")
+            print(f"│{'  Slurm Job Submitted':<{w}}│")
+            print(f"│{'':<{w}}│")
+            print(f"│{'  Job ID  : ' + job_id:<{w}}│")
+            print(f"│{'  Job Name: ' + job_name:<{w}}│")
+            print(f"│{'  Log     : ' + log_path:<{w}}│")
+            print(f"└{'─' * w}┘")
+            print(f"\nTo watch all your jobs:")
+            print(f"    check_job_status()")
+            print(f"To stream live log output:")
+            print(f"    check_job_status('{job_id}', 'live_logs')")
             
     except subprocess.CalledProcessError as e:
         print(f"Error submitting job: {e.stderr}")
