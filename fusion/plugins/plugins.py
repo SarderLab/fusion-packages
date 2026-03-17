@@ -7,272 +7,239 @@ import re
 import shutil
 import time
 
-def check_job_status():
-    """
-    Asks the user for a Job ID and checks its status.
-    """
-    # Get Job ID from user
-    job_id = input("Enter Job ID to check: ").strip()
-    
-    if not job_id:
-        print("No Job ID entered.")
-        return
+# Session store for submitted Slurm jobs — populated by _track_slurm_job so
+# check_job_status can find the log path without the user having to retype it.
+_SLURM_JOBS = {}  # job_id -> {'name': str, 'log': str, 'start': float}
 
-    print(f"\nChecking status for Job ID: {job_id}...")
-    print("-" * 30)
 
-    # --- STEP 1: Check if job is currently active (squeue) ---
+def _print_new_log_lines(log_path, last_pos):
+    """Print any lines added to log_path since last_pos. Returns the new file position."""
+    if not log_path or not os.path.exists(log_path):
+        return last_pos
     try:
-        result = subprocess.run(
-            ['squeue', '-j', job_id, '-h', '-o', '%t'], 
-            capture_output=True, 
-            text=True
-        )
-        
-        state_code = result.stdout.strip()
-
-        if state_code:
-            if state_code == 'R':
-                print(f"Status: \033[92mRUNNING\033[0m") # Green text
-                print("The job is currently processing.")
-                return
-            elif state_code == 'PD':
-                print(f"Status: \033[93mIN QUEUE (PENDING)\033[0m") # Yellow text
-                print("Waiting for resources to become available.")
-                return
-            elif state_code == 'CG':
-                print(f"Status: \033[94mCOMPLETING\033[0m") # Blue text
-                print("The job is finishing up.")
-                return
-            else:
-                print(f"Status: ACTIVE (State: {state_code})")
-                return
-                
+        with open(log_path, 'r') as f:
+            f.seek(last_pos)
+            new_text = f.read()
+            new_pos = f.tell()
+        if new_text.strip():
+            for line in new_text.splitlines():
+                print(f"  {line}")
+        return new_pos
     except Exception:
-        pass
-
-    # --- STEP 2: If not in squeue, check history (sacct) ---
-    try:
-        result = subprocess.run(
-            ['sacct', '-j', job_id, '-n', '-o', 'State'], 
-            capture_output=True, 
-            text=True
-        )
-        
-        output = result.stdout.strip()
-        
-        if output:
-            if 'COMPLETED' in output:
-                print(f"Status: \033[92mSUCCESSFUL\033[0m")
-            elif 'FAILED' in output:
-                print(f"Status: \033[91mFAILED\033[0m") 
-                print("The job terminated with an error.")
-            elif 'TIMEOUT' in output:
-                print(f"Status: \033[91mFAILED (TIMEOUT)\033[0m")
-                print("The job ran out of time.")
-            elif 'CANCELLED' in output:
-                print(f"Status: \033[91mCANCELLED\033[0m")
-                print("The job was stopped manually.")
-            else:
-                clean_state = output.split()[0]
-                print(f"Status: FINISHED ({clean_state})")
-        else:
-            print("Status: UNKNOWN")
-            print("Job ID not found.")
-            
-    except Exception:
-        print("Error! Unable to retrieve job status.")
-
-# ── Job status tracking helpers ───────────────────────────────────────────────
-
-try:
-    from tqdm.auto import tqdm as _tqdm
-    _TQDM_AVAILABLE = True
-except ImportError:
-    _TQDM_AVAILABLE = False
-
-# Girder job status codes → (display label, progress value out of 100)
-_GIRDER_STATUS = {
-    0: ('INACTIVE',    0),
-    1: ('QUEUED',     10),
-    2: ('RUNNING',    50),
-    3: ('SUCCESS ✓', 100),
-    4: ('FAILED ✗',  100),
-    5: ('CANCELLED', 100),
-}
-_GIRDER_TERMINAL = {3, 4, 5}
+        return last_pos
 
 
-def _track_fusion_jobs(gc, job_results, job_type_name, poll_interval=15):
-    """
-    Poll Girder job statuses and display an in-place tqdm progress bar per file.
-    Blocks until all jobs reach a terminal state (success / error / cancelled)
-    or the user presses Ctrl+C (jobs keep running on the server either way).
-    """
-    trackable = [j for j in job_results if j.get('job_id')]
-    if not trackable:
-        return
+def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
+    """Stream Slurm status + live log output. Blocks until job finishes or Ctrl+C."""
+    start_time = _SLURM_JOBS.get(job_id, {}).get('start', time.time())
+    last_pos = 0
 
-    print(f"\nTracking {len(trackable)} job(s) — {job_type_name}")
-    print("(Ctrl+C to stop tracking — jobs keep running on the server)\n")
-
-    if not _TQDM_AVAILABLE:
-        try:
-            while True:
-                all_done = True
-                for j in trackable:
-                    r = gc.get(f"job/{j['job_id']}")
-                    status = r.get('status', 0)
-                    label, _ = _GIRDER_STATUS.get(status, ('UNKNOWN', 0))
-                    print(f"  {j['file_name']}: {label}")
-                    if status not in _GIRDER_TERMINAL:
-                        all_done = False
-                if all_done:
-                    break
-                time.sleep(poll_interval)
-        except KeyboardInterrupt:
-            print("\nTracking stopped.")
-        return
-
-    bars = {}
-    final_states = {}
-
-    for j in trackable:
-        name = j['file_name'][:40]
-        bar = _tqdm(total=100, desc=f"{name:<40}", initial=10,
-                    bar_format='{desc} {bar} {postfix}')
-        bar.set_postfix_str('QUEUED')
-        bars[j['job_id']] = bar
-
-    try:
-        while len(final_states) < len(trackable):
-            for j in trackable:
-                jid = j['job_id']
-                if jid in final_states:
-                    continue
-                try:
-                    r = gc.get(f"job/{jid}")
-                    status = r.get('status', 0)
-                except Exception:
-                    continue
-
-                label, target_n = _GIRDER_STATUS.get(status, ('UNKNOWN', 0))
-                bar = bars[jid]
-
-                # While running, creep the bar forward to show activity
-                if status == 2:
-                    bar.n = min(bar.n + 5, 85)
-                else:
-                    bar.n = target_n
-
-                bar.set_postfix_str(label)
-                bar.refresh()
-
-                if status in _GIRDER_TERMINAL:
-                    final_states[jid] = status
-
-            if len(final_states) < len(trackable):
-                time.sleep(poll_interval)
-
-    except KeyboardInterrupt:
-        print("\nTracking stopped.")
-    finally:
-        for bar in bars.values():
-            bar.close()
-
-    if final_states:
-        succeeded = sum(1 for s in final_states.values() if s == 3)
-        print(f"\nAll jobs finished — {succeeded}/{len(final_states)} succeeded.")
-
-
-def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
-    """
-    Poll a Slurm job via squeue / sacct and display an in-place tqdm progress bar.
-    Blocks until the job leaves the queue or the user presses Ctrl+C.
-    """
-    print(f"\nTracking Slurm job (Ctrl+C to stop tracking — job keeps running)\n")
-
-    if not _TQDM_AVAILABLE:
-        try:
-            while True:
-                r = subprocess.run(['squeue', '-j', job_id, '-h', '-o', '%t'],
-                                   capture_output=True, text=True)
-                state = r.stdout.strip()
-                if state:
-                    print(f"  {job_name} [{job_id}]: {state}")
-                else:
-                    r2 = subprocess.run(['sacct', '-j', job_id, '-n', '-o', 'State'],
-                                        capture_output=True, text=True)
-                    final = r2.stdout.strip().split()[0] if r2.stdout.strip() else 'UNKNOWN'
-                    print(f"  {job_name} [{job_id}]: {final}")
-                    break
-                time.sleep(poll_interval)
-        except KeyboardInterrupt:
-            print("\nTracking stopped.")
-        return
-
-    desc = f"{job_name} [{job_id}]"
-    bar = _tqdm(total=100, desc=f"{desc:<45}", initial=10,
-                bar_format='{desc} {bar} {postfix}')
-    bar.set_postfix_str('PENDING')
+    print("\nStreaming log output — Ctrl+C to detach at any time")
+    print("─" * 55)
 
     try:
         while True:
             r = subprocess.run(['squeue', '-j', job_id, '-h', '-o', '%t'],
                                capture_output=True, text=True)
             state = r.stdout.strip()
+            elapsed = int(time.time() - start_time)
+            elapsed_str = f"{elapsed // 60}m {elapsed % 60:02d}s"
+            ts = time.strftime('%H:%M:%S')
 
-            if state == 'R':
-                bar.n = min(bar.n + 5, 85)
-                bar.set_postfix_str('RUNNING')
-                bar.refresh()
-            elif state == 'PD':
-                bar.n = 10
-                bar.set_postfix_str('PENDING')
-                bar.refresh()
+            if state == 'PD':
+                print(f"[{ts}] Status: PENDING (waiting for node)  [{elapsed_str}]")
+            elif state == 'R':
+                print(f"[{ts}] Status: RUNNING  [{elapsed_str}]")
             elif state == 'CG':
-                bar.n = 90
-                bar.set_postfix_str('COMPLETING')
-                bar.refresh()
+                print(f"[{ts}] Status: COMPLETING  [{elapsed_str}]")
             elif state:
-                bar.set_postfix_str(state)
-                bar.refresh()
+                print(f"[{ts}] Status: {state}  [{elapsed_str}]")
             else:
                 # Job left the queue — get final state from sacct
                 r2 = subprocess.run(['sacct', '-j', job_id, '-n', '-o', 'State'],
                                     capture_output=True, text=True)
                 output = r2.stdout.strip()
                 if 'COMPLETED' in output:
-                    bar.n = 100
-                    bar.set_postfix_str('COMPLETED ✓')
+                    final = 'COMPLETED ✓'
                 elif 'FAILED' in output:
-                    bar.n = 100
-                    bar.set_postfix_str('FAILED ✗')
+                    final = 'FAILED ✗'
                 elif 'TIMEOUT' in output:
-                    bar.n = 100
-                    bar.set_postfix_str('TIMEOUT ✗')
+                    final = 'TIMEOUT ✗'
                 elif 'CANCELLED' in output:
-                    bar.n = 100
-                    bar.set_postfix_str('CANCELLED')
+                    final = 'CANCELLED'
                 else:
-                    bar.n = 100
-                    bar.set_postfix_str(output.split()[0] if output else 'UNKNOWN')
-                bar.refresh()
-                bar.close()
-                if 'COMPLETED' in output:
-                    print(f"\nJob finished! Log: {log_filename}")
-                else:
-                    print(f"\nJob ended. Check log: {log_filename}")
+                    final = output.split()[0] if output else 'UNKNOWN'
+                print(f"[{ts}] Status: {final}  [{elapsed_str}]")
+                _print_new_log_lines(log_path, last_pos)
+                print("─" * 55)
                 return
 
+            last_pos = _print_new_log_lines(log_path, last_pos)
             time.sleep(poll_interval)
 
     except KeyboardInterrupt:
-        bar.close()
-        print(f"\nTracking stopped. Job {job_id} is still running.")
-        print(f"Check status:  squeue -j {job_id}")
-        print(f"Log file:      {log_filename}")
+        print(f"\nDetached. {job_name} [{job_id}] is still running on the cluster.")
+        print(f"To reconnect:  check_job_status('{job_id}')")
 
+
+def check_job_status(job_id=None):
+    """
+    Check a Slurm job's current status and tail its log output.
+    If the job is still running, offers to stream live output.
+
+    Can be called with a job_id directly, or with no args to be prompted.
+    Job name and log path are looked up automatically if the job was submitted
+    in this session via run_apptainer_analysis().
+    """
+    if job_id is None:
+        job_id = input("Enter Job ID to check: ").strip()
+    if not job_id:
+        print("No Job ID entered.")
+        return
+
+    job_id = str(job_id)
+    info = _SLURM_JOBS.get(job_id, {})
+    job_name = info.get('name', f'job_{job_id}')
+    log_path  = info.get('log')
+
+    # Current Slurm state + elapsed time
+    r = subprocess.run(['squeue', '-j', job_id, '-h', '-o', '%t %M'],
+                       capture_output=True, text=True)
+    parts = r.stdout.strip().split()
+    state   = parts[0] if parts else ''
+    elapsed = parts[1] if len(parts) > 1 else '?'
+
+    state_labels = {'R': 'RUNNING', 'PD': 'PENDING', 'CG': 'COMPLETING'}
+
+    if state:
+        label = state_labels.get(state, state)
+        print(f"\nJob {job_id} ({job_name}) — {label}  [{elapsed} elapsed]")
+    else:
+        r2 = subprocess.run(['sacct', '-j', job_id, '-n', '-o', 'State'],
+                            capture_output=True, text=True)
+        output = r2.stdout.strip()
+        if 'COMPLETED' in output:
+            final = 'COMPLETED ✓'
+        elif 'FAILED' in output:
+            final = 'FAILED ✗'
+        elif 'TIMEOUT' in output:
+            final = 'TIMEOUT ✗'
+        elif 'CANCELLED' in output:
+            final = 'CANCELLED'
+        else:
+            final = output.split()[0] if output else 'UNKNOWN (job not found)'
+        print(f"\nJob {job_id} ({job_name}) — {final}")
+
+    # Show last 10 lines of the log
+    if log_path and os.path.exists(log_path):
+        print(f"\nLast 10 lines of log:")
+        print("─" * 55)
+        try:
+            with open(log_path, 'r') as f:
+                lines = f.readlines()
+            for line in lines[-10:]:
+                print(f"  {line}", end='')
+            if lines and not lines[-1].endswith('\n'):
+                print()
+        except Exception:
+            pass
+        print("─" * 55)
+    elif log_path:
+        print(f"\nLog file not yet available: {log_path}")
+    else:
+        print("\nLog path unknown — job may have been submitted in a previous session.")
+
+    # If still active, offer to stream live
+    if state:
+        try:
+            stream = input("\nStream live from here? (y/n): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            stream = 'n'
+        if stream == 'y':
+            _stream_slurm_log(job_id, job_name, log_path, poll_interval=10)
+
+
+
+def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
+    """
+    Called immediately after sbatch submission.
+    Resolves the actual log path (replaces %j with the real job ID), stores job
+    info in _SLURM_JOBS, prints a summary box, then asks the user whether to
+    stream live output or detach and check later.
+    """
+    log_path = log_filename.replace('%j', job_id)
+
+    _SLURM_JOBS[job_id] = {
+        'name':  job_name,
+        'log':   log_path,
+        'start': time.time(),
+    }
+
+    w = 53
+    print(f"\n┌{'─' * w}┐")
+    print(f"│{'  Slurm Job Submitted':<{w}}│")
+    print(f"│{'':<{w}}│")
+    print(f"│{'  Job ID  : ' + job_id:<{w}}│")
+    print(f"│{'  Job Name: ' + job_name:<{w}}│")
+    print(f"│{'  Log     : ' + log_path:<{w}}│")
+    print(f"└{'─' * w}┘")
+
+    print("\nTrack this job?")
+    print("  [1] Stream live log output")
+    print("  [2] Detach — check manually later")
+
+    try:
+        choice = input("Enter choice (1/2): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        choice = '2'
+
+    if choice == '1':
+        _stream_slurm_log(job_id, job_name, log_path, poll_interval)
+    else:
+        print(f"\nDetached. Job {job_id} is running in the background.")
+        print(f"\nTo check status later, run:")
+        print(f"    check_job_status('{job_id}')")
+
+
+def _get_jupyter_slurm_resources(default_time="08:00:00", default_mem="96gb"):
+    """
+    Read the time limit and memory of the current JupyterHub Slurm job and
+    return them so the analysis job can use the same allocation.
+
+    JupyterHub (via batchspawner) sets SLURM_JOB_ID in the kernel environment.
+    Falls back to the defaults if the env var is missing or squeue fails.
+    """
+    job_id = os.environ.get('SLURM_JOB_ID', '').strip()
+    if not job_id:
+        print(f"Note: SLURM_JOB_ID not found — using defaults ({default_time}, {default_mem})")
+        return default_time, default_mem
+
+    try:
+        r = subprocess.run(
+            ['squeue', '-j', job_id, '-h', '--format=%l %m'],
+            capture_output=True, text=True, timeout=10
+        )
+        parts = r.stdout.strip().split()
+        if len(parts) >= 2:
+            time_limit = parts[0]           # e.g. "8:00:00"
+            raw_mem   = parts[1].upper()    # e.g. "98304M" or "96G"
+
+            # Normalise memory to GB for --mem sbatch directive
+            if raw_mem.endswith('G'):
+                mem_limit = f"{raw_mem[:-1]}gb"
+            elif raw_mem.endswith('M'):
+                mem_gb = int(raw_mem[:-1]) // 1024
+                mem_limit = f"{mem_gb}gb"
+            else:
+                mem_limit = f"{raw_mem}mb"  # leave as-is if unknown unit
+
+            print(f"Matched JupyterHub session resources: time={time_limit}, mem={mem_limit}")
+            return time_limit, mem_limit
+    except Exception:
+        pass
+
+    print(f"Note: Could not query Slurm job {job_id} — using defaults ({default_time}, {default_mem})")
+    return default_time, default_mem
 
 def get_hive_workspace_root():
     """
@@ -448,13 +415,11 @@ def run_apptainer_analysis():
             user_params['annotations_dir'] = f"{dataset_root}/{config['annotations_subdir']}"
             print(f"Auto-derived annotations directory: /data/{user_params['annotations_dir']}")
 
-    # Ask for Job Name
-    job_name_input = input("\nEnter job name (default: analysis_job): ").strip()
-    job_name = job_name_input if job_name_input else "analysis_job"
+    # Job name is derived from the analysis type key (already snake_case)
+    job_name = analysis_type
 
-    # Hardcoded Resources
-    time_limit = "01:00:00"
-    mem_limit = "8gb"
+    # Match resources to the current JupyterHub Slurm session
+    time_limit, mem_limit = _get_jupyter_slurm_resources()
     
     # DETERMINE WORKSPACE ROOT AUTOMATICALLY
     workspace_path = get_hive_workspace_root()
@@ -489,25 +454,23 @@ def run_apptainer_analysis():
     apptainer_command = " \\\n  ".join(apptainer_cmd_parts)
 
     # --- DETERMINE FILE PATHS FOR SCRIPT AND LOGS ---
-    # Default to current directory if no input file is present
+    # Logs and submission script go into a "logs" folder under the dataset root.
+    # Fall back to cwd if the dataset root can't be resolved.
     target_dir = os.getcwd()
-    
-    # Save the script next to the primary input file
+
     primary = config.get('primary_input', 'input_file')
     if primary in user_params:
-        # User input path is relative to the workspace root
         relative_input_path = user_params[primary]
-        # Construct the absolute path on the host system
         clean_relative_path = relative_input_path.lstrip(os.sep).lstrip('.')
-        full_input_path = os.path.join(workspace_path, clean_relative_path)
-        
-        # Get the directory containing the input file
-        target_dir = os.path.dirname(full_input_path)
-        
-        # Check if this directory actually exists on the host
-        if not os.path.exists(target_dir):
-            print(f"Warning: Calculated directory {target_dir} does not exist. Saving to current dir.")
-            target_dir = os.getcwd()
+
+        # Walk up input_depth levels to reach the dataset root
+        dataset_rel = clean_relative_path
+        for _ in range(config.get('input_depth', 2)):
+            dataset_rel = os.path.dirname(dataset_rel)
+
+        logs_dir = os.path.join(workspace_path, dataset_rel, 'logs')
+        os.makedirs(logs_dir, exist_ok=True)
+        target_dir = logs_dir
 
     script_filename = os.path.join(target_dir, f"{job_name}_submit.sh")
     log_filename = os.path.join(target_dir, f"{job_name}_%j.log")
@@ -832,9 +795,6 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
         for job in job_results:
             print(f"  - {job['file_name']}: job_id={job['job_id']}")
         print(f"{'='*80}")
-
-        # Track submitted jobs — blocks until all finish or user presses Ctrl+C
-        _track_fusion_jobs(gc, job_results, selected_job['name'])
 
         return response_summary
         
