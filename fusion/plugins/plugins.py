@@ -7,9 +7,20 @@ import re
 import shutil
 import time
 
-# Session store for submitted Slurm jobs — populated by _track_slurm_job so
-# check_job_status can find the log path without the user having to retype it.
-_SLURM_JOBS = {}  # job_id -> {'name': str, 'log': str, 'start': float}
+# Session store for submitted Slurm jobs
+_SLURM_JOBS = {}   # job_id -> {'name': str, 'log': str, 'start': float}
+
+# Session store for submitted Fusion backend (Girder) jobs
+_FUSION_JOBS = {}  # job_id -> {'name': str, 'gc': girder_client, 'file_name': str, 'start': float}
+
+_GIRDER_STATUS = {
+    0: 'INACTIVE',
+    1: 'QUEUED',
+    2: 'RUNNING',
+    3: 'SUCCESS ✓',
+    4: 'ERROR ✗',
+    5: 'CANCELLED',
+}
 
 
 def _print_new_log_lines(log_path, last_pos):
@@ -30,8 +41,7 @@ def _print_new_log_lines(log_path, last_pos):
 
 
 def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
-    """Stream Slurm status + live log output. Blocks until job finishes or Ctrl+C."""
-    start_time = _SLURM_JOBS.get(job_id, {}).get('start', time.time())
+    """Stream live log output. Blocks until job finishes or Ctrl+C."""
     last_pos = 0
 
     print("\nStreaming log output — Ctrl+C to detach at any time")
@@ -42,20 +52,10 @@ def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
             r = subprocess.run(['squeue', '-j', job_id, '-h', '-o', '%t'],
                                capture_output=True, text=True)
             state = r.stdout.strip()
-            elapsed = int(time.time() - start_time)
-            elapsed_str = f"{elapsed // 60}m {elapsed % 60:02d}s"
-            ts = time.strftime('%H:%M:%S')
 
-            if state == 'PD':
-                print(f"[{ts}] Status: PENDING (waiting for node)  [{elapsed_str}]")
-            elif state == 'R':
-                print(f"[{ts}] Status: RUNNING  [{elapsed_str}]")
-            elif state == 'CG':
-                print(f"[{ts}] Status: COMPLETING  [{elapsed_str}]")
-            elif state:
-                print(f"[{ts}] Status: {state}  [{elapsed_str}]")
-            else:
-                # Job left the queue — get final state from sacct
+            if not state:
+                # Job left the queue — print any remaining log lines then show final state
+                last_pos = _print_new_log_lines(log_path, last_pos)
                 r2 = subprocess.run(['sacct', '-j', job_id, '-n', '-o', 'State'],
                                     capture_output=True, text=True)
                 output = r2.stdout.strip()
@@ -69,9 +69,8 @@ def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
                     final = 'CANCELLED'
                 else:
                     final = output.split()[0] if output else 'UNKNOWN'
-                print(f"[{ts}] Status: {final}  [{elapsed_str}]")
-                _print_new_log_lines(log_path, last_pos)
                 print("─" * 55)
+                print(f"Job {job_id} finished — {final}")
                 return
 
             last_pos = _print_new_log_lines(log_path, last_pos)
@@ -79,7 +78,36 @@ def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
 
     except KeyboardInterrupt:
         print(f"\nDetached. {job_name} [{job_id}] is still running on the cluster.")
-        print(f"To reconnect:  check_job_status('{job_id}')")
+        print(f"To reconnect:  check_job_status('{job_id}', 'live_logs')")
+
+
+def _stream_girder_log(job_id, job_name, gc, poll_interval=10):
+    """Stream live log output from a Girder job. Blocks until job finishes or Ctrl+C."""
+    last_count = 0
+
+    print("\nStreaming log output — Ctrl+C to detach at any time")
+    print("─" * 55)
+
+    try:
+        while True:
+            job = gc.get(f'job/{job_id}')
+            status = job.get('status', 0)
+            log_entries = job.get('log', [])
+
+            for entry in log_entries[last_count:]:
+                print(entry, end='')
+            last_count = len(log_entries)
+
+            if status in (3, 4, 5):  # terminal states: SUCCESS, ERROR, CANCELLED
+                print("─" * 55)
+                print(f"Job {job_id} finished — {_GIRDER_STATUS.get(status, str(status))}")
+                return
+
+            time.sleep(poll_interval)
+
+    except KeyboardInterrupt:
+        print(f"\nDetached. {job_name} [{job_id}] is still running on JupyterHub.")
+        print(f"To reconnect:  check_job_status('{job_id}', 'live_logs')")
 
 
 def check_job_status(job_id=None, mode=None):
@@ -103,27 +131,30 @@ def check_job_status(job_id=None, mode=None):
             print("No Job ID entered.")
             return
         job_id = str(job_id)
-        info = _SLURM_JOBS.get(job_id, {})
-        job_name = info.get('name', f'job_{job_id}')
-        log_path = info.get('log')
-        if not log_path:
-            log_path = input(
-                f"Log path not found for job {job_id}.\nEnter log path (or press Enter to skip): "
-            ).strip() or None
-        _stream_slurm_log(job_id, job_name, log_path, poll_interval=10)
+
+        # Detect job type: Girder if found in _FUSION_JOBS, otherwise Slurm
+        if job_id in _FUSION_JOBS:
+            info = _FUSION_JOBS[job_id]
+            _stream_girder_log(job_id, info['name'], info['gc'], poll_interval=10)
+        else:
+            info = _SLURM_JOBS.get(job_id, {})
+            job_name = info.get('name', f'job_{job_id}')
+            log_path = info.get('log')
+            if not log_path:
+                log_path = input(
+                    f"Log path not found for job {job_id}.\nEnter log path (or press Enter to skip): "
+                ).strip() or None
+            _stream_slurm_log(job_id, job_name, log_path, poll_interval=10)
         return
 
-    # ── Default: watch-style squeue view ────────────────────────────────────
-    STATUS_LEGEND = [
-        ("PD",  "PENDING    — waiting for resources or dependencies"),
-        ("R",   "RUNNING    — currently executing on a node"),
-        ("CG",  "COMPLETING — finishing up (almost done)"),
-        ("S",   "SUSPENDED  — job has been suspended"),
-        ("ST",  "STOPPED    — job has been stopped"),
-        ("F",   "FAILED     — job exited with a non-zero code"),
-        ("CA",  "CANCELLED  — job was cancelled by user or admin"),
-        ("TO",  "TIMEOUT    — job exceeded its time limit"),
-        ("NF",  "NODE_FAIL  — a compute node failed"),
+    # ── Default: watch-style view (Slurm + Fusion backend) ──────────────────
+    SLURM_LEGEND = [
+        ("PD", "PENDING    — waiting for resources or dependencies"),
+        ("R",  "RUNNING    — currently executing on a node"),
+        ("CG", "COMPLETING — finishing up (almost done)"),
+        ("CA", "CANCELLED  — job was cancelled by user or admin"),
+        ("TO", "TIMEOUT    — exceeded time limit"),
+        ("F",  "FAILED     — job exited with a non-zero code"),
     ]
 
     try:
@@ -140,24 +171,41 @@ def check_job_status(job_id=None, mode=None):
     print("Watching job queue — Ctrl+C to stop\n")
     try:
         while True:
-            r = subprocess.run(squeue_cmd, capture_output=True, text=True)
-            output = r.stdout.strip()
-
             if use_clear:
                 clear_output(wait=True)
 
-            print(f"[{time.strftime('%H:%M:%S')}]  squeue -u $USER  (refreshing every 2s — Ctrl+C to stop)\n")
-            print(output if output else "(no jobs currently in queue)")
-            print()
+            print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s — Ctrl+C to stop")
+
+            # ── Slurm section ────────────────────────────────────────────────
+            print(f"\n{'─' * 60}")
+            print("SLURM JOBS  (squeue -u $USER)")
             print("─" * 60)
+            r = subprocess.run(squeue_cmd, capture_output=True, text=True)
+            print(r.stdout.strip() if r.stdout.strip() else "(no Slurm jobs in queue)")
+            print()
             print("Status codes:")
-            for code, desc in STATUS_LEGEND:
+            for code, desc in SLURM_LEGEND:
                 print(f"  {code:<4}  {desc}")
-            if _SLURM_JOBS:
+
+            # ── Fusion backend section ───────────────────────────────────────
+            if _FUSION_JOBS:
+                print(f"\n{'─' * 60}")
+                print("FUSION BACKEND JOBS  (JupyterHub / Girder)")
+                print("─" * 60)
+                print(f"  {'JOB ID':<28}  {'NAME':<35}  STATUS")
+                print(f"  {'─'*28}  {'─'*35}  {'─'*12}")
+                for jid, info in _FUSION_JOBS.items():
+                    try:
+                        job = info['gc'].get(f'job/{jid}')
+                        status_label = _GIRDER_STATUS.get(job.get('status', 0), '?')
+                    except Exception:
+                        status_label = 'UNKNOWN'
+                    print(f"  {jid:<28}  {info['name']:<35}  {status_label}")
                 print()
-                print("Jobs submitted this session:")
-                for jid, info in _SLURM_JOBS.items():
-                    print(f"  {jid}  {info['name']}  →  log: {info.get('log', 'unknown')}")
+                print("Status codes:")
+                for code, label in _GIRDER_STATUS.items():
+                    print(f"  {code}  {label}")
+
             print()
             print("To stream live logs:  check_job_status('<job_id>', 'live_logs')")
 
@@ -781,10 +829,18 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
                     params['agg_annotation'] = agg_ann
                 
                 r = gc.post(run_endpoint, parameters=params)
-                print(f"Job submitted. job_id={r['_id']}")
-                
+                submitted_id = r['_id']
+                print(f"Job submitted. job_id={submitted_id}")
+
+                _FUSION_JOBS[submitted_id] = {
+                    'name':      f"{selected_job['name']} — {wsi['name']}",
+                    'gc':        gc,
+                    'file_name': wsi['name'],
+                    'start':     time.time(),
+                }
+
                 job_results.append({
-                    'job_id': r['_id'],
+                    'job_id': submitted_id,
                     'file_name': wsi['name'],
                     'file_id': wsi['file_id'],
                     'item_id': wsi['item_id'],
@@ -822,6 +878,13 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
         for job in job_results:
             print(f"  - {job['file_name']}: job_id={job['job_id']}")
         print(f"{'='*80}")
+
+        successful = [j for j in job_results if j.get('job_id')]
+        if successful:
+            print(f"\nTo watch all your jobs:")
+            print(f"    check_job_status()")
+            print(f"To stream live log output:")
+            print(f"    check_job_status('{successful[0]['job_id']}', 'live_logs')")
 
         return response_summary
         
