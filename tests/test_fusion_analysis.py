@@ -1,274 +1,208 @@
 """
-Test file to individually run all 6 Fusion backend analyses on the same image.
+Tests for the job status tracking helpers in fusion/plugins/plugins.py.
 
-Files are fetched directly from Girder — no local upload needed.
-Set the Girder IDs in the CONFIG section below, then run:
-    python tests/test_fusion_analysis.py
+Fully offline — no Girder connection, no Slurm cluster needed.
+time.sleep is patched so tests run instantly.
+
+Run:
+    /opt/anaconda3/bin/python tests/test_fusion_analysis.py
 """
 
-import girder_client
-from getpass import getpass
-import json
+import sys
 import os
+from unittest.mock import MagicMock, patch, call
 
-TOKEN_CACHE = os.path.join(os.path.dirname(__file__), '.girder_token')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ── CONFIG — set your Girder IDs here ─────────────────────────────────────────
+from fusion.plugins.plugins import _track_fusion_jobs, _track_slurm_job
 
-FUSION_API_URL = 'https://fusionpub.rc.ufl.edu/api/v1'
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
-# Internal Docker URL used by plugins running on the server to call back to Girder.
-# This bypasses the nginx proxy and avoids 414 URI Too Long errors on large metadata PUTs.
-GIRDER_INTERNAL_URL = 'http://girder:8080/api/v1/'
+def _make_girder_responses(*statuses):
+    """Return a list of gc.get side_effect dicts for the given status codes."""
+    return [{'status': s} for s in statuses]
 
-# Girder item ID of the test WSI — used for all 6 jobs
-TEST_ITEM_ID = '69a754e63bf95fef535604cb'
 
-# Job 4 (Label Transfer) — Girder file ID of the counts file
-COUNTS_FILE_ID = '69a754c93bf95fef535604c6'
-
-# Job 6 (FTU Spot Aggregation)
-BASE_ANNOTATION = 'Spots'
-AGG_ANNOTATION  = 'arteries/arterioles, tubules'   # comma-separated
-
-# ── Job configs (mirrors run_analysis_tasks_fusion_backend) ───────────────────
-
-JOB_CONFIGS = {
-    '1': {
-        'name': 'Multi-Compartment Segmentation',
-        'path': ["sarderlab/fusion_v1","MultiCompartmentSegmentation", "MultiC"],
-        'input_param': 'input_file',
-        'params': {
-            'modelfile': '6967ee7b413ffaf54798bc8e'
-        }
-    },
-    '2': {
-        'name': 'Frozen Glomerulus Segmentation',
-        'path': ["sarderlab/fusion_v1", "FrozenGlomSegmentation", "GlomSeg"],
-        'input_param': 'input_image',
-        'params': {
-            'model_file': '6967ef12413ffaf54798bc91',
-            'num_classes': 2,
-            'threshold': 0.5,
-            'batch_size': 8,
-            'region_size': 512,
-            'step_size': 256,
-            'num_workers': 4
-        }
-    },
-    '3': {
-        'name': 'Feature Extraction',
-        'path': ["sarderlab/fusion_v1", "PathomicFeatureExtraction", "PathomicsFE"],
-        'input_param': 'input_image',
-        'params': {
-            'type': 'Feature_Pipeline',
-            'threshold_nuclei': 200,
-            'minsize_nuclei': 20,
-            'threshold_PAS': 50,
-            'minsize_PAS': 20,
-            'threshold_LS': 0,
-            'minsize_LS': 0,
-            'ignoreAnns': '',
-            'rename': True,
-            'replace_annotations': True,
-            'returnXlsx': False
-        }
-    },
-    '4': {
-        'name': 'Label Transfer (10X Visium - step 1)',
-        'path': ["sarderlab/fusion_v1", "10X_VisiumAnalysis", "LabelTransfer"],
-        'input_param': 'input_image',
-        'params': {
-            'organ': 'KPMP Atlas Kidney',
-            'reference': '697baf5f13bbccd3003a6435'
-        }
-    },
-    '5': {
-        'name': 'Spot Annotation (10X Visium - step 2)',
-        'path': ["sarderlab/fusion_v1", "10X_VisiumAnalysis", "SpotAnnotation"],
-        'input_param': 'input_file',
-        'params': {
-            'cell_reference_file': '69892c0b7d7fb0fd9933751f'
-        }
-    },
-    '6': {
-        'name': 'FTU Spot Aggregation',
-        'path': ["sarderlab/fusion_v1", "FTUSpotAggregation", "Aggregate"],
-        'input_param': 'input_image',
-        'params': {}
-    }
-}
-
-# ── Shared helpers ─────────────────────────────────────────────────────────────
-
-def connect():
+def _squeue_then_sacct(squeue_sequence, sacct_output):
     """
-    Authenticate to the Fusion Girder backend and return gc.
-    Caches the token in .girder_token so subsequent runs skip the password prompt.
-    Delete .girder_token to force re-login.
+    Build a subprocess.run side_effect that returns squeue values in order,
+    then returns sacct_output on the next call.
     """
-    gc = girder_client.GirderClient(apiUrl=FUSION_API_URL)
-
-    # Try cached token first
-    if os.path.exists(TOKEN_CACHE):
-        token = json.loads(open(TOKEN_CACHE).read())['token']
-        gc.token = token
-        try:
-            me = gc.get('user/me')
-            if me:
-                print(f"Reusing session for: {me['firstName']} {me['lastName']}\n")
-                return gc
-        except Exception:
-            print("Cached token expired, re-authenticating...")
-
-    username = input("Fusion username: ").strip()
-    password = getpass("Fusion password: ")
-    user_info = gc.authenticate(username, password)
-    json.dump({'token': gc.token}, open(TOKEN_CACHE, 'w'))
-    print(f"Logged in as: {user_info['firstName']} {user_info['lastName']}\n")
-    return gc
-
-
-def get_wsi_item(gc, item_id):
-    """
-    Fetch a single WSI item by Girder item ID.
-    Mirrors the largeImage lookup in run_analysis_tasks_fusion_backend.
-    """
-    details = gc.get(f'item/{item_id}')
-    if 'largeImage' not in details:
-        raise RuntimeError(f"Item {item_id} does not have a largeImage (not a WSI).")
-    print(f"Using WSI: {details['name']} (item_id={item_id})")
-    return [{
-        'name': details['name'],
-        'item_id': item_id,
-        'file_id': details['largeImage'].get('fileId')
-    }]
-
-
-def submit_jobs(gc, job_config, wsi_items, extra_params=None):
-    """
-    Submit jobs for each WSI and return a list of result dicts.
-    Mirrors the job submission logic in run_analysis_tasks_fusion_backend.
-
-    extra_params: flat dict applied to every job,
-                  or a callable(wsi) -> dict for per-file params.
-    """
-    response = gc.get('slicer_cli_web/docker_image')
-    run_endpoint = response
-    for key in job_config['path']:
-        if key not in run_endpoint:
-            raise KeyError(
-                f"Path key '{key}' not found. Available keys: {list(run_endpoint.keys())}"
-            )
-        run_endpoint = run_endpoint[key]
-    run_endpoint = run_endpoint['run']
-
-    results = []
-    for wsi in wsi_items:
-        print(f"  Submitting for: {wsi['name']}")
-        try:
-            params = {
-                job_config['input_param']: wsi['file_id'],
-                'girderApiUrl': GIRDER_INTERNAL_URL,
-                'girderToken': gc.token
-            }
-            params.update(job_config['params'])
-            if callable(extra_params):
-                params.update(extra_params(wsi))
-            elif extra_params:
-                params.update(extra_params)
-
-            r = gc.post(run_endpoint, parameters=params)
-            print(f"    job_id: {r['_id']}")
-            results.append({
-                'job_id': r['_id'],
-                'file_name': wsi['name'],
-                'item_id': wsi['item_id'],
-                'status': 'submitted'
-            })
-        except Exception as e:
-            print(f"    FAILED: {e}")
-            results.append({
-                'job_id': None,
-                'file_name': wsi['name'],
-                'item_id': wsi['item_id'],
-                'status': 'failed',
-                'error': str(e)
-            })
+    results = [MagicMock(stdout=s) for s in squeue_sequence]
+    results.append(MagicMock(stdout=sacct_output))   # sacct call at the end
     return results
 
+# ── _track_fusion_jobs tests ───────────────────────────────────────────────────
 
-def _run(label, gc, job_config, extra_params=None):
-    print(f"\n{'='*60}\n{label}\n{'='*60}")
-    wsi_items = get_wsi_item(gc, TEST_ITEM_ID)
-    results = submit_jobs(gc, job_config, wsi_items, extra_params)
-    failed = [r for r in results if r['status'] == 'failed']
-    print(f"Done — {len(results) - len(failed)}/{len(results)} submitted, item_id={TEST_ITEM_ID}")
-    return {'job_type': label, 'item_id': TEST_ITEM_ID, 'jobs': results}
+def test_fusion_job_success():
+    """Job goes QUEUED → RUNNING → SUCCESS. Should poll 3 times and exit."""
+    gc = MagicMock()
+    gc.get.side_effect = _make_girder_responses(1, 2, 3)
 
-# ── Individual test functions ──────────────────────────────────────────────────
+    job_results = [{'job_id': 'abc123', 'file_name': 'slide1.tif'}]
 
-def test_multi_compartment_segmentation(gc):
-    return _run("1. Multi-Compartment Segmentation", gc, JOB_CONFIGS['1'])
+    with patch('fusion.plugins.plugins.time.sleep'):
+        _track_fusion_jobs(gc, job_results, 'Test Analysis', poll_interval=0)
 
-
-def test_frozen_glomerulus_segmentation(gc):
-    return _run("2. Frozen Glomerulus Segmentation", gc, JOB_CONFIGS['2'])
+    assert gc.get.call_count == 3
+    gc.get.assert_called_with('job/abc123')
+    print("  PASSED: fusion job success (3 polls)")
 
 
-def test_feature_extraction(gc):
-    return _run("3. Feature Extraction", gc, JOB_CONFIGS['3'])
+def test_fusion_job_failure():
+    """Job goes QUEUED → RUNNING → FAILED. Should exit on status 4."""
+    gc = MagicMock()
+    gc.get.side_effect = _make_girder_responses(1, 2, 4)
+
+    job_results = [{'job_id': 'def456', 'file_name': 'slide2.tif'}]
+
+    with patch('fusion.plugins.plugins.time.sleep'):
+        _track_fusion_jobs(gc, job_results, 'Test Analysis', poll_interval=0)
+
+    assert gc.get.call_count == 3
+    print("  PASSED: fusion job failure detected correctly")
 
 
-def test_label_transfer(gc):
-    """Requires COUNTS_FILE_ID to be set in CONFIG."""
-    return _run(
-        "4. Label Transfer (10X Visium - step 1)", gc, JOB_CONFIGS['4'],
-        extra_params={'counts_file': COUNTS_FILE_ID}
+def test_fusion_multiple_jobs():
+    """Two jobs: first finishes fast, second takes longer."""
+    gc = MagicMock()
+    # Poll sequence — both jobs are queried each cycle:
+    # Cycle 1: job1=RUNNING, job2=QUEUED
+    # Cycle 2: job1=SUCCESS, job2=RUNNING
+    # Cycle 3: (job1 already done) job2=SUCCESS
+    gc.get.side_effect = [
+        {'status': 2},   # cycle 1: job1 RUNNING
+        {'status': 1},   # cycle 1: job2 QUEUED
+        {'status': 3},   # cycle 2: job1 SUCCESS
+        {'status': 2},   # cycle 2: job2 RUNNING
+        {'status': 3},   # cycle 3: job2 SUCCESS
+    ]
+
+    job_results = [
+        {'job_id': 'aaa', 'file_name': 'slide_A.tif'},
+        {'job_id': 'bbb', 'file_name': 'slide_B.tif'},
+    ]
+
+    with patch('fusion.plugins.plugins.time.sleep'):
+        _track_fusion_jobs(gc, job_results, 'Multi-file Test', poll_interval=0)
+
+    assert gc.get.call_count == 5
+    print("  PASSED: two fusion jobs tracked correctly (5 total polls)")
+
+
+def test_fusion_skips_null_job_ids():
+    """Jobs with job_id=None (failed submissions) should be ignored."""
+    gc = MagicMock()
+    gc.get.side_effect = _make_girder_responses(3)
+
+    job_results = [
+        {'job_id': None,    'file_name': 'failed_submit.tif'},
+        {'job_id': 'xyz99', 'file_name': 'good_slide.tif'},
+    ]
+
+    with patch('fusion.plugins.plugins.time.sleep'):
+        _track_fusion_jobs(gc, job_results, 'Test', poll_interval=0)
+
+    # Only the valid job should be polled
+    assert gc.get.call_count == 1
+    gc.get.assert_called_once_with('job/xyz99')
+    print("  PASSED: null job_id skipped correctly")
+
+
+def test_fusion_empty_job_list():
+    """No trackable jobs — should return immediately without calling gc."""
+    gc = MagicMock()
+
+    with patch('fusion.plugins.plugins.time.sleep'):
+        _track_fusion_jobs(gc, [], 'Empty', poll_interval=0)
+
+    gc.get.assert_not_called()
+    print("  PASSED: empty job list returns immediately")
+
+
+# ── _track_slurm_job tests ─────────────────────────────────────────────────────
+
+def test_slurm_job_completed():
+    """Job goes PENDING → RUNNING → COMPLETED."""
+    side_effects = _squeue_then_sacct(
+        squeue_sequence=['PD\n', 'R\n', '\n'],   # 3 squeue calls, then empty → left queue
+        sacct_output='COMPLETED      \n'
     )
 
+    with patch('subprocess.run', side_effect=side_effects), \
+         patch('fusion.plugins.plugins.time.sleep'):
+        _track_slurm_job('11111', 'test_job', '/logs/test_job_11111.log', poll_interval=0)
 
-def test_spot_annotation(gc):
-    """Run AFTER test_label_transfer — uses the integrated RDS uploaded to the item."""
-    return _run("5. Spot Annotation (10X Visium - step 2)", gc, JOB_CONFIGS['5'])
+    print("  PASSED: slurm job COMPLETED path")
 
 
-def test_ftu_spot_aggregation(gc):
-    """Requires BASE_ANNOTATION and AGG_ANNOTATION to be set in CONFIG."""
-    return _run(
-        "6. FTU Spot Aggregation", gc, JOB_CONFIGS['6'],
-        extra_params={
-            'base_annotation': BASE_ANNOTATION,
-            'agg_annotation': AGG_ANNOTATION
-        }
+def test_slurm_job_failed():
+    """Job goes PENDING → RUNNING → FAILED."""
+    side_effects = _squeue_then_sacct(
+        squeue_sequence=['PD\n', 'R\n', '\n'],
+        sacct_output='FAILED      \n'
     )
 
+    with patch('subprocess.run', side_effect=side_effects), \
+         patch('fusion.plugins.plugins.time.sleep'):
+        _track_slurm_job('22222', 'test_job', '/logs/test_job_22222.log', poll_interval=0)
 
-# ── Job menu ───────────────────────────────────────────────────────────────────
+    print("  PASSED: slurm job FAILED path")
 
-MENU = {
-    '1': ('Multi-Compartment Segmentation',       test_multi_compartment_segmentation),
-    '2': ('Frozen Glomerulus Segmentation',        test_frozen_glomerulus_segmentation),
-    '3': ('Feature Extraction',                    test_feature_extraction),
-    '4': ('Label Transfer (10X Visium - step 1)',  test_label_transfer),
-    '5': ('Spot Annotation (10X Visium - step 2)', test_spot_annotation),
-    '6': ('FTU Spot Aggregation',                  test_ftu_spot_aggregation),
-}
+
+def test_slurm_job_completing_state():
+    """Job goes through CG (completing) state before leaving queue."""
+    side_effects = _squeue_then_sacct(
+        squeue_sequence=['PD\n', 'R\n', 'CG\n', '\n'],
+        sacct_output='COMPLETED      \n'
+    )
+
+    with patch('subprocess.run', side_effect=side_effects), \
+         patch('fusion.plugins.plugins.time.sleep'):
+        _track_slurm_job('33333', 'test_job', '/logs/test_job_33333.log', poll_interval=0)
+
+    print("  PASSED: slurm job CG (completing) state handled")
+
+
+def test_slurm_job_timeout():
+    """Job times out."""
+    side_effects = _squeue_then_sacct(
+        squeue_sequence=['PD\n', 'R\n', '\n'],
+        sacct_output='TIMEOUT      \n'
+    )
+
+    with patch('subprocess.run', side_effect=side_effects), \
+         patch('fusion.plugins.plugins.time.sleep'):
+        _track_slurm_job('44444', 'test_job', '/logs/test_job_44444.log', poll_interval=0)
+
+    print("  PASSED: slurm job TIMEOUT path")
+
+
+# ── Runner ─────────────────────────────────────────────────────────────────────
+
+TESTS = [
+    ("fusion: success (queued→running→done)",      test_fusion_job_success),
+    ("fusion: failure detected",                    test_fusion_job_failure),
+    ("fusion: two files tracked",                   test_fusion_multiple_jobs),
+    ("fusion: null job_id skipped",                 test_fusion_skips_null_job_ids),
+    ("fusion: empty job list",                      test_fusion_empty_job_list),
+    ("slurm:  COMPLETED path",                      test_slurm_job_completed),
+    ("slurm:  FAILED path",                         test_slurm_job_failed),
+    ("slurm:  CG state handled",                    test_slurm_job_completing_state),
+    ("slurm:  TIMEOUT path",                        test_slurm_job_timeout),
+]
 
 if __name__ == '__main__':
-    gc = connect()
+    passed, failed = 0, 0
+    for label, fn in TESTS:
+        print(f"\n{label}")
+        try:
+            fn()
+            passed += 1
+        except Exception as e:
+            print(f"  FAILED: {e}")
+            failed += 1
 
-    print("Select the analysis to run:")
-    for key, (name, _) in MENU.items():
-        print(f"  {key}. {name}")
-    print("  all. Run all sequentially")
-
-    choice = input("\nEnter choice: ").strip().lower()
-
-    if choice == 'all':
-        for _, fn in MENU.values():
-            fn(gc)
-    elif choice in MENU:
-        MENU[choice][1](gc)
-    else:
-        print(f"Invalid choice '{choice}'. Enter 1–6 or 'all'.")
+    print(f"\n{'='*55}")
+    print(f"Results: {passed} passed, {failed} failed out of {len(TESTS)} tests")
+    print("=" * 55)

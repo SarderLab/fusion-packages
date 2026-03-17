@@ -5,6 +5,7 @@ import os
 import subprocess
 import re
 import shutil
+import time
 
 def check_job_status():
     """
@@ -81,6 +82,196 @@ def check_job_status():
             
     except Exception:
         print("Error! Unable to retrieve job status.")
+
+# ── Job status tracking helpers ───────────────────────────────────────────────
+
+try:
+    from tqdm.auto import tqdm as _tqdm
+    _TQDM_AVAILABLE = True
+except ImportError:
+    _TQDM_AVAILABLE = False
+
+# Girder job status codes → (display label, progress value out of 100)
+_GIRDER_STATUS = {
+    0: ('INACTIVE',    0),
+    1: ('QUEUED',     10),
+    2: ('RUNNING',    50),
+    3: ('SUCCESS ✓', 100),
+    4: ('FAILED ✗',  100),
+    5: ('CANCELLED', 100),
+}
+_GIRDER_TERMINAL = {3, 4, 5}
+
+
+def _track_fusion_jobs(gc, job_results, job_type_name, poll_interval=15):
+    """
+    Poll Girder job statuses and display an in-place tqdm progress bar per file.
+    Blocks until all jobs reach a terminal state (success / error / cancelled)
+    or the user presses Ctrl+C (jobs keep running on the server either way).
+    """
+    trackable = [j for j in job_results if j.get('job_id')]
+    if not trackable:
+        return
+
+    print(f"\nTracking {len(trackable)} job(s) — {job_type_name}")
+    print("(Ctrl+C to stop tracking — jobs keep running on the server)\n")
+
+    if not _TQDM_AVAILABLE:
+        try:
+            while True:
+                all_done = True
+                for j in trackable:
+                    r = gc.get(f"job/{j['job_id']}")
+                    status = r.get('status', 0)
+                    label, _ = _GIRDER_STATUS.get(status, ('UNKNOWN', 0))
+                    print(f"  {j['file_name']}: {label}")
+                    if status not in _GIRDER_TERMINAL:
+                        all_done = False
+                if all_done:
+                    break
+                time.sleep(poll_interval)
+        except KeyboardInterrupt:
+            print("\nTracking stopped.")
+        return
+
+    bars = {}
+    final_states = {}
+
+    for j in trackable:
+        name = j['file_name'][:40]
+        bar = _tqdm(total=100, desc=f"{name:<40}", initial=10,
+                    bar_format='{desc} {bar} {postfix}')
+        bar.set_postfix_str('QUEUED')
+        bars[j['job_id']] = bar
+
+    try:
+        while len(final_states) < len(trackable):
+            for j in trackable:
+                jid = j['job_id']
+                if jid in final_states:
+                    continue
+                try:
+                    r = gc.get(f"job/{jid}")
+                    status = r.get('status', 0)
+                except Exception:
+                    continue
+
+                label, target_n = _GIRDER_STATUS.get(status, ('UNKNOWN', 0))
+                bar = bars[jid]
+
+                # While running, creep the bar forward to show activity
+                if status == 2:
+                    bar.n = min(bar.n + 5, 85)
+                else:
+                    bar.n = target_n
+
+                bar.set_postfix_str(label)
+                bar.refresh()
+
+                if status in _GIRDER_TERMINAL:
+                    final_states[jid] = status
+
+            if len(final_states) < len(trackable):
+                time.sleep(poll_interval)
+
+    except KeyboardInterrupt:
+        print("\nTracking stopped.")
+    finally:
+        for bar in bars.values():
+            bar.close()
+
+    if final_states:
+        succeeded = sum(1 for s in final_states.values() if s == 3)
+        print(f"\nAll jobs finished — {succeeded}/{len(final_states)} succeeded.")
+
+
+def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
+    """
+    Poll a Slurm job via squeue / sacct and display an in-place tqdm progress bar.
+    Blocks until the job leaves the queue or the user presses Ctrl+C.
+    """
+    print(f"\nTracking Slurm job (Ctrl+C to stop tracking — job keeps running)\n")
+
+    if not _TQDM_AVAILABLE:
+        try:
+            while True:
+                r = subprocess.run(['squeue', '-j', job_id, '-h', '-o', '%t'],
+                                   capture_output=True, text=True)
+                state = r.stdout.strip()
+                if state:
+                    print(f"  {job_name} [{job_id}]: {state}")
+                else:
+                    r2 = subprocess.run(['sacct', '-j', job_id, '-n', '-o', 'State'],
+                                        capture_output=True, text=True)
+                    final = r2.stdout.strip().split()[0] if r2.stdout.strip() else 'UNKNOWN'
+                    print(f"  {job_name} [{job_id}]: {final}")
+                    break
+                time.sleep(poll_interval)
+        except KeyboardInterrupt:
+            print("\nTracking stopped.")
+        return
+
+    desc = f"{job_name} [{job_id}]"
+    bar = _tqdm(total=100, desc=f"{desc:<45}", initial=10,
+                bar_format='{desc} {bar} {postfix}')
+    bar.set_postfix_str('PENDING')
+
+    try:
+        while True:
+            r = subprocess.run(['squeue', '-j', job_id, '-h', '-o', '%t'],
+                               capture_output=True, text=True)
+            state = r.stdout.strip()
+
+            if state == 'R':
+                bar.n = min(bar.n + 5, 85)
+                bar.set_postfix_str('RUNNING')
+                bar.refresh()
+            elif state == 'PD':
+                bar.n = 10
+                bar.set_postfix_str('PENDING')
+                bar.refresh()
+            elif state == 'CG':
+                bar.n = 90
+                bar.set_postfix_str('COMPLETING')
+                bar.refresh()
+            elif state:
+                bar.set_postfix_str(state)
+                bar.refresh()
+            else:
+                # Job left the queue — get final state from sacct
+                r2 = subprocess.run(['sacct', '-j', job_id, '-n', '-o', 'State'],
+                                    capture_output=True, text=True)
+                output = r2.stdout.strip()
+                if 'COMPLETED' in output:
+                    bar.n = 100
+                    bar.set_postfix_str('COMPLETED ✓')
+                elif 'FAILED' in output:
+                    bar.n = 100
+                    bar.set_postfix_str('FAILED ✗')
+                elif 'TIMEOUT' in output:
+                    bar.n = 100
+                    bar.set_postfix_str('TIMEOUT ✗')
+                elif 'CANCELLED' in output:
+                    bar.n = 100
+                    bar.set_postfix_str('CANCELLED')
+                else:
+                    bar.n = 100
+                    bar.set_postfix_str(output.split()[0] if output else 'UNKNOWN')
+                bar.refresh()
+                bar.close()
+                if 'COMPLETED' in output:
+                    print(f"\nJob finished! Log: {log_filename}")
+                else:
+                    print(f"\nJob ended. Check log: {log_filename}")
+                return
+
+            time.sleep(poll_interval)
+
+    except KeyboardInterrupt:
+        bar.close()
+        print(f"\nTracking stopped. Job {job_id} is still running.")
+        print(f"Check status:  squeue -j {job_id}")
+        print(f"Log file:      {log_filename}")
 
 
 def get_hive_workspace_root():
@@ -345,16 +536,10 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
         output = result.stdout.strip()
         print(f"Success! {output}")
         
-        # Parse Job ID to give user the status command
         match = re.search(r"Submitted batch job (\d+)", output)
         if match:
             job_id = match.group(1)
-            print("\n" + "-"*40)
-            print("CHECK JOB STATUS:")
-            print("-" * 40)
-            print(f"To check the status of this specific job, run:")
-            print(f"\033[1m  !squeue -j {job_id} \033[0m")
-            print("-" * 40)
+            _track_slurm_job(job_id, job_name, log_filename)
             
     except subprocess.CalledProcessError as e:
         print(f"Error submitting job: {e.stderr}")
@@ -632,7 +817,10 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
         for job in job_results:
             print(f"  - {job['file_name']}: job_id={job['job_id']}")
         print(f"{'='*80}")
-        
+
+        # Track submitted jobs — blocks until all finish or user presses Ctrl+C
+        _track_fusion_jobs(gc, job_results, selected_job['name'])
+
         return response_summary
         
     except Exception as e:
