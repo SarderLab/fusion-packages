@@ -424,8 +424,23 @@ def run_apptainer_analysis():
     primary = config.get('primary_input')
     if primary and primary in user_params:
         rel_input = user_params[primary].lstrip(os.sep).lstrip('.')
+        input_depth = config.get('input_depth', 2)
+
+        # Validate that the path has enough components for the configured depth.
+        # e.g. depth=2 requires at least "a/b/file" (2 separators).
+        path_parts = [p for p in rel_input.replace('\\', '/').split('/') if p]
+        if len(path_parts) <= input_depth:
+            print(f"\nWarning: '{rel_input}' is too shallow for this analysis.")
+            print(f"  Expected a path at least {input_depth + 1} levels deep, e.g.:")
+            if input_depth == 2:
+                print(f"  fusion_demo_notebooks/datasets/HBM355.CWFF.355/ometiff-pyramids/file.tif")
+            else:
+                print(f"  fusion_demo_notebooks/datasets/HBM355.CWFF.355/expr.h5ad")
+            print("Please re-run and enter the correct path.\n")
+            return None
+
         dataset_root = rel_input
-        for _ in range(config.get('input_depth', 2)):
+        for _ in range(input_depth):
             dataset_root = os.path.dirname(dataset_root)
         user_params['output_dir'] = f"{dataset_root}/{config['output_subdir']}"
         print(f"\nAuto-derived output directory: /data/{user_params['output_dir']}")
