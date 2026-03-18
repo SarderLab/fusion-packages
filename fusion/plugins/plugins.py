@@ -148,15 +148,6 @@ def check_job_status(job_id=None, mode=None):
         return
 
     # ── Default: watch-style view (Slurm + Fusion backend) ──────────────────
-    SLURM_LEGEND = [
-        ("PD", "PENDING    — waiting for resources or dependencies"),
-        ("R",  "RUNNING    — currently executing on a node"),
-        ("CG", "COMPLETING — finishing up (almost done)"),
-        ("CA", "CANCELLED  — job was cancelled by user or admin"),
-        ("TO", "TIMEOUT    — exceeded time limit"),
-        ("F",  "FAILED     — job exited with a non-zero code"),
-    ]
-
     try:
         from IPython.display import clear_output
         use_clear = True
@@ -164,34 +155,43 @@ def check_job_status(job_id=None, mode=None):
         use_clear = False
 
     user = os.environ.get('USER') or os.environ.get('LOGNAME') or ''
-    squeue_cmd = ['squeue', '--format=%.10i %.12P %.30j %.8T %.10M %.9l %R']
+    # Fetch JOBID, PARTITION (for WORKSPACES filtering only), NAME, STATE, TIME
+    squeue_cmd = ['squeue', '-h', '--format=%i|%P|%j|%T|%M']
     if user:
-        squeue_cmd = ['squeue', '-u', user, '--format=%.10i %.12P %.30j %.8T %.10M %.9l %R']
+        squeue_cmd = ['squeue', '-u', user, '-h', '--format=%i|%P|%j|%T|%M']
 
-    print("Watching job queue — Ctrl+C to stop\n")
+    print("Watching job queue — to cancel a job run:  !scancel <job_id>\n")
     try:
         while True:
             if use_clear:
                 clear_output(wait=True)
 
-            print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s — Ctrl+C to stop")
+            print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s")
+            print(f"To cancel a job:  !scancel <job_id>\n")
 
             # ── Slurm section ────────────────────────────────────────────────
-            print(f"\n{'─' * 60}")
-            print("SLURM JOBS  (squeue -u $USER)")
-            print("─" * 60)
+            print(f"{'─' * 70}")
+            print("SLURM JOBS")
+            print(f"{'─' * 70}")
             r = subprocess.run(squeue_cmd, capture_output=True, text=True)
-            print(r.stdout.strip() if r.stdout.strip() else "(no Slurm jobs in queue)")
-            print()
-            print("Status codes:")
-            for code, desc in SLURM_LEGEND:
-                print(f"  {code:<4}  {desc}")
+            rows = [
+                line.split('|') for line in r.stdout.strip().splitlines()
+                if line and not line.split('|')[1].upper().startswith('WORKSPACES')
+            ]
+            if rows:
+                print(f"  {'JOBID':<12}  {'NAME':<35}  {'STATE':<12}  TIME")
+                print(f"  {'─'*12}  {'─'*35}  {'─'*12}  {'─'*10}")
+                for parts in rows:
+                    if len(parts) >= 5:
+                        print(f"  {parts[0]:<12}  {parts[2]:<35}  {parts[3]:<12}  {parts[4]}")
+            else:
+                print("  (no analysis jobs in queue)")
 
             # ── Fusion backend section ───────────────────────────────────────
             if _FUSION_JOBS:
-                print(f"\n{'─' * 60}")
+                print(f"\n{'─' * 70}")
                 print("FUSION BACKEND JOBS  (JupyterHub / Girder)")
-                print("─" * 60)
+                print(f"{'─' * 70}")
                 print(f"  {'JOB ID':<28}  {'NAME':<35}  STATUS")
                 print(f"  {'─'*28}  {'─'*35}  {'─'*12}")
                 for jid, info in _FUSION_JOBS.items():
@@ -201,10 +201,6 @@ def check_job_status(job_id=None, mode=None):
                     except Exception:
                         status_label = 'UNKNOWN'
                     print(f"  {jid:<28}  {info['name']:<35}  {status_label}")
-                print()
-                print("Status codes:")
-                for code, label in _GIRDER_STATUS.items():
-                    print(f"  {code}  {label}")
 
             print()
             print("To stream live logs:  check_job_status('<job_id>', 'live_logs')")
@@ -231,14 +227,13 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
         'start': time.time(),
     }
 
-    w = 53
-    print(f"\n┌{'─' * w}┐")
-    print(f"│{'  Slurm Job Submitted':<{w}}│")
-    print(f"│{'':<{w}}│")
-    print(f"│{'  Job ID  : ' + job_id:<{w}}│")
-    print(f"│{'  Job Name: ' + job_name:<{w}}│")
-    print(f"│{'  Log     : ' + log_path:<{w}}│")
-    print(f"└{'─' * w}┘")
+    print(f"\n{'─' * 55}")
+    print(f"Slurm Job Submitted")
+    print(f"{'─' * 55}")
+    print(f"  Job ID  : {job_id}")
+    print(f"  Job Name: {job_name}")
+    print(f"  Log     : {log_path}")
+    print(f"{'─' * 55}")
 
     print("\nTrack this job?")
     print("  [1] Stream live log output")
@@ -257,45 +252,9 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
         print(f"    check_job_status('{job_id}')")
 
 
-def _get_jupyter_slurm_resources(default_time="08:00:00", default_mem="96gb"):
-    """
-    Read the time limit and memory of the current JupyterHub Slurm job and
-    return them so the analysis job can use the same allocation.
-
-    JupyterHub (via batchspawner) sets SLURM_JOB_ID in the kernel environment.
-    Falls back to the defaults if the env var is missing or squeue fails.
-    """
-    job_id = os.environ.get('SLURM_JOB_ID', '').strip()
-    if not job_id:
-        print(f"Note: SLURM_JOB_ID not found — using defaults ({default_time}, {default_mem})")
-        return default_time, default_mem
-
-    try:
-        r = subprocess.run(
-            ['squeue', '-j', job_id, '-h', '--format=%l %m'],
-            capture_output=True, text=True, timeout=10
-        )
-        parts = r.stdout.strip().split()
-        if len(parts) >= 2:
-            time_limit = parts[0]           # e.g. "8:00:00"
-            raw_mem   = parts[1].upper()    # e.g. "98304M" or "96G"
-
-            # Normalise memory to GB for --mem sbatch directive
-            if raw_mem.endswith('G'):
-                mem_limit = f"{raw_mem[:-1]}gb"
-            elif raw_mem.endswith('M'):
-                mem_gb = int(raw_mem[:-1]) // 1024
-                mem_limit = f"{mem_gb}gb"
-            else:
-                mem_limit = f"{raw_mem}mb"  # leave as-is if unknown unit
-
-            print(f"Matched JupyterHub session resources: time={time_limit}, mem={mem_limit}")
-            return time_limit, mem_limit
-    except Exception:
-        pass
-
-    print(f"Note: Could not query Slurm job {job_id} — using defaults ({default_time}, {default_mem})")
-    return default_time, default_mem
+def _get_jupyter_slurm_resources():
+    """Return fixed Slurm resource limits for analysis jobs."""
+    return "12:00:00", "48gb"
 
 def get_hive_workspace_root():
     """
@@ -466,10 +425,8 @@ def run_apptainer_analysis():
         for _ in range(input_depth):
             dataset_root = os.path.dirname(dataset_root)
         user_params['output_dir'] = f"{dataset_root}/{config['output_subdir']}"
-        print(f"\nAuto-derived output directory: /data/{user_params['output_dir']}")
         if 'annotations_subdir' in config:
             user_params['annotations_dir'] = f"{dataset_root}/{config['annotations_subdir']}"
-            print(f"Auto-derived annotations directory: /data/{user_params['annotations_dir']}")
 
     # Job name is derived from the analysis type key (already snake_case)
     job_name = analysis_type
@@ -477,12 +434,8 @@ def run_apptainer_analysis():
     # Match resources to the current JupyterHub Slurm session
     time_limit, mem_limit = _get_jupyter_slurm_resources()
     
-    # DETERMINE WORKSPACE ROOT AUTOMATICALLY
     workspace_path = get_hive_workspace_root()
     mount_point = "/data"
-    
-    print(f"\nDetected Workspace Root: {workspace_path}")
-    print(f"Mounting: {workspace_path} -> {mount_point}")
 
     apptainer_cmd_parts = [
         "apptainer exec",
@@ -546,29 +499,20 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
 {apptainer_command}
 """
     
-    print("\n" + "="*60)
-    print(f"GENERATING SUBMISSION SCRIPT: {script_filename}")
-    print(f"LOG FILES WILL BE SAVED TO: {log_filename}")
-    print("="*60)
-    
     # Write the script to file
     try:
         with open(script_filename, 'w') as f:
             f.write(slurm_script_content)
-    except IOError as e:
-        print(f"Error writing script to {target_dir}. Falling back to current directory.")
+    except IOError:
         target_dir = os.getcwd()
         script_filename = os.path.join(target_dir, f"{job_name}_submit.sh")
         with open(script_filename, 'w') as f:
             f.write(slurm_script_content)
-
-    print(f"Script saved. Submitting via sbatch...")
     
     # Submit the job
     try:
         result = subprocess.run(['sbatch', script_filename], check=True, capture_output=True, text=True)
         output = result.stdout.strip()
-        print(f"Success! {output}")
         
         match = re.search(r"Submitted batch job (\d+)", output)
         if match:
@@ -581,14 +525,13 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
                 'start': time.time(),
             }
 
-            w = 53
-            print(f"\n┌{'─' * w}┐")
-            print(f"│{'  Slurm Job Submitted':<{w}}│")
-            print(f"│{'':<{w}}│")
-            print(f"│{'  Job ID  : ' + job_id:<{w}}│")
-            print(f"│{'  Job Name: ' + job_name:<{w}}│")
-            print(f"│{'  Log     : ' + log_path:<{w}}│")
-            print(f"└{'─' * w}┘")
+            print(f"\n{'─' * 55}")
+            print(f"Slurm Job Submitted")
+            print(f"{'─' * 55}")
+            print(f"  Job ID  : {job_id}")
+            print(f"  Job Name: {job_name}")
+            print(f"  Log     : {log_path}")
+            print(f"{'─' * 55}")
             print(f"\nTo watch all your jobs:")
             print(f"    check_job_status()")
             print(f"To stream live log output:")
