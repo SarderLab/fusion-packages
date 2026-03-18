@@ -451,9 +451,10 @@ def run_apptainer_analysis():
         else:
             apptainer_cmd_parts.append(f"--{param_name}")
 
-    # Add fixed (hardcoded) params — values are already fully-specified container paths.
+    # Add fixed (hardcoded) params — quote values that contain spaces.
     for param_name, param_value in config.get('fixed_params', {}).items():
-        apptainer_cmd_parts.append(f"--{param_name} {param_value}")
+        quoted = f"'{param_value}'" if ' ' in str(param_value) else str(param_value)
+        apptainer_cmd_parts.append(f"--{param_name} {quoted}")
             
     apptainer_command = " \\\n  ".join(apptainer_cmd_parts)
 
