@@ -43,8 +43,6 @@ def _print_new_log_lines(log_path, last_pos):
 def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
     """Stream live log output. Blocks until job finishes or Ctrl+C."""
     last_pos = 0
-
-    print("\nStreaming log output — Ctrl+C to detach at any time")
     print("─" * 55)
 
     try:
@@ -77,15 +75,14 @@ def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
             time.sleep(poll_interval)
 
     except KeyboardInterrupt:
-        print(f"\nDetached. {job_name} [{job_id}] is still running on the cluster.")
+        print(f"\n{job_name} [{job_id}] is still running on the cluster.")
         print(f"To reconnect:  check_job_status('{job_id}', 'live_logs')")
+        print(f"To cancel:     !scancel {job_id}")
 
 
 def _stream_girder_log(job_id, job_name, gc, poll_interval=10):
     """Stream live log output from a Girder job. Blocks until job finishes or Ctrl+C."""
     last_count = 0
-
-    print("\nStreaming log output — Ctrl+C to detach at any time")
     print("─" * 55)
 
     try:
@@ -106,7 +103,7 @@ def _stream_girder_log(job_id, job_name, gc, poll_interval=10):
             time.sleep(poll_interval)
 
     except KeyboardInterrupt:
-        print(f"\nDetached. {job_name} [{job_id}] is still running on JupyterHub.")
+        print(f"\n{job_name} [{job_id}] is still running on JupyterHub.")
         print(f"To reconnect:  check_job_status('{job_id}', 'live_logs')")
 
 
@@ -160,14 +157,12 @@ def check_job_status(job_id=None, mode=None):
     if user:
         squeue_cmd = ['squeue', '-u', user, '-h', '--format=%i|%P|%j|%T|%M']
 
-    print("Watching job queue — to cancel a job run:  !scancel <job_id>\n")
     try:
         while True:
             if use_clear:
                 clear_output(wait=True)
 
-            print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s")
-            print(f"To cancel a job:  !scancel <job_id>\n")
+            print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s  |  To cancel: !scancel <job_id>\n")
 
             # ── Slurm section ────────────────────────────────────────────────
             print(f"{'─' * 70}")
@@ -525,17 +520,11 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
                 'start': time.time(),
             }
 
-            print(f"\n{'─' * 55}")
-            print(f"Slurm Job Submitted")
-            print(f"{'─' * 55}")
-            print(f"  Job ID  : {job_id}")
-            print(f"  Job Name: {job_name}")
-            print(f"  Log     : {log_path}")
-            print(f"{'─' * 55}")
-            print(f"\nTo watch all your jobs:")
-            print(f"    check_job_status()")
-            print(f"To stream live log output:")
-            print(f"    check_job_status('{job_id}', 'live_logs')")
+            print(f"\nJob submitted  |  ID: {job_id}  |  Name: {job_name}")
+            print(f"Log: {log_path}")
+            print(f"\nTo watch all your jobs:      check_job_status()")
+            print(f"To stream live log output:   check_job_status('{job_id}', 'live_logs')")
+            print(f"To cancel:                   !scancel {job_id}")
             
     except subprocess.CalledProcessError as e:
         print(f"Error submitting job: {e.stderr}")
@@ -834,3 +823,54 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     except Exception as e:
         print(f"Error submitting job: {e}")
         return {"error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HOW TO RUN AN ANALYSIS
+# ─────────────────────────────────────────────────────────────────────────────
+# Use run_analysis() to launch any analysis task. Choose a backend:
+#
+#   'notebook'  — runs the analysis via Slurm on the cluster using Apptainer
+#                 containers. Fully interactive: prompts for analysis type and
+#                 file paths, then submits a Slurm job.
+#
+#                 run_analysis('notebook')
+#
+#   'fusion'    — runs the analysis on the Fusion / JupyterHub backend via
+#                 Girder. Requires a Girder client (gc) and your username.
+#                 Optionally pass a HubMAP ID or local file path to skip prompts.
+#
+#                 run_analysis('fusion', gc=gc, user_name='your_username')
+#                 run_analysis('fusion', gc=gc, user_name='your_username', hubmap_id='HBM355.CWFF.355')
+#
+# After submission, use check_job_status() to monitor your jobs:
+#
+#   check_job_status()                        # live-refreshing queue view
+#   check_job_status('job_id', 'live_logs')   # stream log output for a job
+# ─────────────────────────────────────────────────────────────────────────────
+def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=None, file_paths=None):
+    """
+    Unified entry point for running analysis tasks.
+
+    Args:
+        backend (str): 'notebook' to run via Slurm/Apptainer, 'fusion' to run via the Fusion backend.
+        gc: Girder client instance (required when backend='fusion').
+        user_name (str): Athena username (required when backend='fusion').
+        hubmap_id (str): HubMAP ID to process (optional, fusion only).
+        file_path (str): Local file path to process (optional, fusion only).
+        file_paths (list): List of local file paths to process (optional, fusion only).
+    """
+    if backend == 'notebook':
+        return run_apptainer_analysis()
+    elif backend == 'fusion':
+        if gc is None or user_name is None:
+            raise ValueError("backend='fusion' requires both 'gc' and 'user_name' arguments.")
+        return run_analysis_tasks_fusion_backend(
+            gc=gc,
+            user_name=user_name,
+            hubmap_id=hubmap_id,
+            file_path=file_path,
+            file_paths=file_paths,
+        )
+    else:
+        raise ValueError(f"Unknown backend '{backend}'. Choose 'notebook' or 'fusion'.")
