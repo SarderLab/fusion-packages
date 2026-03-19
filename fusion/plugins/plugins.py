@@ -341,7 +341,8 @@ def run_apptainer_analysis():
             "fixed_params": {},
             "output_subdir": "Files",
             "primary_input": "input_file",
-            "input_depth": 2
+            "input_depth": 2,
+            "skip_script_params": {"input_file"}
         },
         "spatial_aggregation": {
             "image": "dsrithad/fusion1_decoupled:spatial-aggregation-notebook",
@@ -422,6 +423,23 @@ def run_apptainer_analysis():
         user_params['output_dir'] = f"{dataset_root}/{config['output_subdir']}"
         if 'annotations_subdir' in config:
             user_params['annotations_dir'] = f"{dataset_root}/{config['annotations_subdir']}"
+        if analysis_type == "spot_annotation":
+            import glob as _glob
+            files_dir = os.path.join(workspace_path, dataset_root, "Files")
+            matches = _glob.glob(os.path.join(files_dir, "*_integrated.rds"))
+            if len(matches) == 0:
+                print(f"\nError: No *_integrated.rds file found in {files_dir}")
+                print("Please run Label Transfer first to generate the integrated RDS.\n")
+                return None
+            if len(matches) > 1:
+                print(f"\nError: Multiple *_integrated.rds files found in {files_dir}:")
+                for m in matches:
+                    print(f"  {m}")
+                print("Please ensure only one integrated RDS exists.\n")
+                return None
+            rds_rel = os.path.relpath(matches[0], workspace_path)
+            user_params['input_file'] = rds_rel
+            print(f"Found integrated RDS: {rds_rel}")
 
     # Job name is derived from the analysis type key (already snake_case)
     job_name = analysis_type
@@ -441,8 +459,12 @@ def run_apptainer_analysis():
 
     # Add user-provided and auto-derived parameters to the apptainer command.
     # path_params are prefixed with the container mount point (/data).
+    # skip_script_params are used locally for derivation but not passed to the script.
     path_params = config.get('path_params', set())
+    skip_script_params = config.get('skip_script_params', set())
     for param_name, param_value in user_params.items():
+        if param_name in skip_script_params:
+            continue
         if param_value is not None:
             if param_name in path_params:
                 apptainer_cmd_parts.append(f"--{param_name} {mount_point}/{param_value}")
@@ -480,6 +502,16 @@ def run_apptainer_analysis():
     script_filename = os.path.join(target_dir, f"{job_name}_submit.sh")
     log_filename = os.path.join(target_dir, f"{job_name}_%j.log")
 
+    # For label_transfer, clean up the expr_components folder created as a side effect.
+    # For spot_annotation, rename the output *_annotations.json to Spots.json.
+    cleanup_cmd = ""
+    if analysis_type == "label_transfer" and primary in user_params:
+        abs_dataset_root = os.path.join(workspace_path, dataset_rel)
+        cleanup_cmd = f"\nrm -rf {abs_dataset_root}/expr_components"
+    elif analysis_type == "spot_annotation" and primary in user_params:
+        abs_files_dir = os.path.join(workspace_path, dataset_rel, "Files")
+        cleanup_cmd = f"\nmv {abs_files_dir}/*_annotations.json {abs_files_dir}/Spots.json"
+
     # create a submission script content
     slurm_script_content = f"""#!/bin/bash
 #SBATCH --job-name={job_name}
@@ -492,7 +524,7 @@ def run_apptainer_analysis():
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
 
-{apptainer_command}
+{apptainer_command}{cleanup_cmd}
 """
     
     # Write the script to file
