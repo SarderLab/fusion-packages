@@ -347,11 +347,11 @@ def run_apptainer_analysis():
         "spatial_aggregation": {
             "image": "dsrithad/fusion1_decoupled:spatial-aggregation-notebook",
             "script": "/opt/Spatial-Omics-Plugins/SpatialAggregation/cli/Aggregate/AggregateLocal.py",
-            "params": ["base_annotation", "agg_annotations"],
+            "params": ["base_annotation"],
             "path_params": {"base_annotation", "agg_annotations", "output_dir"},
             "output_subdir": "Aggregated_FTU",
             "primary_input": "base_annotation",
-            "input_depth": 1
+            "input_depth": 2
         }
     }
 
@@ -377,6 +377,9 @@ def run_apptainer_analysis():
     print(f"\nSelected: {analysis_type.replace('_', ' ').title()}")
     print(f"Container: {config['image']}")
 
+    workspace_path = get_hive_workspace_root()
+    mount_point = "/data"
+
     # Get parameters specific to this container
     user_params = {}
     if config['params']:
@@ -384,10 +387,7 @@ def run_apptainer_analysis():
         print("-" * 40)
         for param in config['params']:
             while True:
-                if param == 'agg_annotations':
-                    value = input(f"Enter {param} paths (space-separated): ").strip()
-                else:
-                    value = input(f"Enter {param} path: ").strip()
+                value = input(f"Enter {param} path: ").strip()
                 if value:
                     user_params[param] = value
                     break
@@ -441,14 +441,53 @@ def run_apptainer_analysis():
             user_params['input_file'] = rds_rel
             print(f"Found integrated RDS: {rds_rel}")
 
+        if analysis_type == "spatial_aggregation":
+            segmented_ftu_dir = os.path.join(workspace_path, dataset_root, "Segmented_FTU")
+            supported_exts = {'.json', '.geojson', '.xml', '.csv', '.parquet'}
+            if os.path.isdir(segmented_ftu_dir):
+                ann_files = sorted([
+                    f for f in os.listdir(segmented_ftu_dir)
+                    if os.path.splitext(f)[1].lower() in supported_exts
+                ])
+            else:
+                ann_files = []
+
+            if not ann_files:
+                print(f"\nNo annotation files found in Segmented FTU at: {segmented_ftu_dir}")
+                print("Please ensure Segmented FTU annotations exist before running aggregation.")
+                return None
+
+            print(f"\nAvailable annotations in Segmented FTU:")
+            print("-" * 40)
+            for i, fname in enumerate(ann_files, 1):
+                print(f"  {i}. {fname}")
+
+            while True:
+                sel = input("\nEnter annotation numbers to aggregate (comma-separated, e.g. 1,3): ").strip()
+                try:
+                    indices = [int(x.strip()) for x in sel.split(',')]
+                    selected_paths = []
+                    valid = True
+                    for idx in indices:
+                        if 1 <= idx <= len(ann_files):
+                            rel_path = os.path.join(dataset_root, "Segmented_FTU", ann_files[idx - 1])
+                            selected_paths.append(rel_path)
+                        else:
+                            print(f"  {idx} is out of range (1-{len(ann_files)}). Please try again.")
+                            valid = False
+                            break
+                    if valid and selected_paths:
+                        user_params['agg_annotations'] = selected_paths
+                        print(f"Selected {len(selected_paths)} annotation(s): {[ann_files[i-1] for i in indices]}")
+                        break
+                except ValueError:
+                    print("Please enter numbers separated by commas.")
+
     # Job name is derived from the analysis type key (already snake_case)
     job_name = analysis_type
 
     # Match resources to the current JupyterHub Slurm session
     time_limit, mem_limit = _get_jupyter_slurm_resources()
-    
-    workspace_path = get_hive_workspace_root()
-    mount_point = "/data"
 
     apptainer_cmd_parts = [
         "apptainer exec",
@@ -467,7 +506,11 @@ def run_apptainer_analysis():
             continue
         if param_value is not None:
             if param_name in path_params:
-                apptainer_cmd_parts.append(f"--{param_name} {mount_point}/{param_value}")
+                if isinstance(param_value, list):
+                    paths_str = " ".join(f"{mount_point}/{p}" for p in param_value)
+                    apptainer_cmd_parts.append(f"--{param_name} {paths_str}")
+                else:
+                    apptainer_cmd_parts.append(f"--{param_name} {mount_point}/{param_value}")
             else:
                 apptainer_cmd_parts.append(f"--{param_name} {param_value}")
         else:
