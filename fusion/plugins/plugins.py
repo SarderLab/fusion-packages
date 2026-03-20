@@ -609,25 +609,26 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
 
     return script_filename
 
-def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=None, file_paths=None):
+def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=None, file_paths=None, dir_path=None):
     """
     Run multi-compartment segmentation on image(s) from HubMAP or local file(s).
-    
+
     Args:
         gc: Girder client instance.
         user_name (str): Athena username.
         hubmap_id (str): HubMAP ID to process.
         file_path (str): Local file path to process.
         file_paths (list): List of local file paths to process.
-    
+        dir_path (str): Local directory path; all files in the directory will be uploaded and processed.
+
     Returns:
         dict: Job information including job_ids and file details.
     """
-    if sum([bool(hubmap_id), bool(file_path), bool(file_paths)]) > 1:
-        raise ValueError("Please provide only one of: hubmap_id, file_path, or file_paths.")
-    
-    if not hubmap_id and not file_path and not file_paths:
-        raise ValueError("Please provide either hubmap_id, file_path, or file_paths.")
+    if sum([bool(hubmap_id), bool(file_path), bool(file_paths), bool(dir_path)]) > 1:
+        raise ValueError("Please provide only one of: hubmap_id, file_path, file_paths, or dir_path.")
+
+    if not hubmap_id and not file_path and not file_paths and not dir_path:
+        raise ValueError("Please provide either hubmap_id, file_path, file_paths, or dir_path.")
 
     # Prompt user to select job type
     print(f"\n{'='*80}")
@@ -722,6 +723,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
         user=user_name,
         file_path=file_path,
         file_paths=file_paths,
+        dir_path=dir_path,
         temp_download=True  # Clean up after upload
     )
     
@@ -924,7 +926,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
 #   check_job_status()                        # live-refreshing queue view
 #   check_job_status('job_id', 'live_logs')   # stream log output for a job
 # ─────────────────────────────────────────────────────────────────────────────
-def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=None, file_paths=None):
+def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=None, file_paths=None, dir_path=None):
     """
     Unified entry point for running analysis tasks.
 
@@ -935,6 +937,7 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         hubmap_id (str): HubMAP ID to process (optional, fusion only).
         file_path (str): Local file path to process (optional, fusion only).
         file_paths (list): List of local file paths to process (optional, fusion only).
+        dir_path (str): Local directory path; all files in the directory will be uploaded and processed (optional, fusion only).
     """
     if backend == 'notebook':
         return run_apptainer_analysis()
@@ -947,6 +950,7 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
             hubmap_id=hubmap_id,
             file_path=file_path,
             file_paths=file_paths,
+            dir_path=dir_path,
         )
     else:
         raise ValueError(f"Unknown backend '{backend}'. Choose 'notebook' or 'fusion'.")
