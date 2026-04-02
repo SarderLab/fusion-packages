@@ -687,24 +687,25 @@ def file_exists(gc, folder_id, filename):
     return None
 
 def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file_paths=None,
-                       all=False, histology=False, visium=False, temp_download=False,
+                       dir_path=None, all=False, histology=False, visium=False, temp_download=False,
                        folder_id=None, athena_url='https://fusionpub.rc.ufl.edu//api/v1'):
     """
     Download files to Athena from HubMAP or local files.
-    
+
     Args:
         gc: Girder client instance.
         hubmap_id (str): HubMAP ID to download from HubMAP.
         user (str): Athena username for creating/finding folders.
         file_path (str): Single local file path to upload.
         file_paths (list): List of local file paths to upload.
+        dir_path (str): Local directory path; all files in the directory will be uploaded.
         all (bool): If True, download all files from HubMAP.
         histology (bool): If True, download only OME-TIFF files from HubMAP.
         visium (bool): If True, download only h5ad files from HubMAP.
         temp_download (bool): If True, download to temp folder and clean up after upload.
         folder_id (str): Existing Athena folder ID to upload to.
         athena_url (str): Athena API base URL.
-    
+
     Returns:
         dict: Upload results with item IDs and statistics.
     """
@@ -729,8 +730,10 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
             folder_id, should_upload = create_or_get_athena_folder(gc, user, file_name=os.path.basename(file_path))
         elif file_paths:
             folder_id, should_upload = create_or_get_athena_folder(gc, user)
+        elif dir_path:
+            folder_id, should_upload = create_or_get_athena_folder(gc, user, folder_name=os.path.basename(os.path.normpath(dir_path)))
         else:
-            print("Error: Must provide either hubmap_id, file_path, or file_paths")
+            print("Error: Must provide either hubmap_id, file_path, file_paths, or dir_path")
             return {"error": "No input provided"}
     else:
         print(f"Using folder_id: {folder_id}")
@@ -861,6 +864,40 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
                 })
                 results['total_failed'] += 1
     
+    # 4: Upload all files from a local directory
+    elif dir_path:
+        if not os.path.isdir(dir_path):
+            print(f"Error: '{dir_path}' is not a valid directory")
+            return {"error": f"Invalid directory: {dir_path}"}
+
+        files_to_upload = [
+            os.path.join(root, f)
+            for root, _, files in os.walk(dir_path)
+            for f in files
+        ]
+        print(f"\nUploading {len(files_to_upload)} file(s) from directory: {dir_path}")
+
+        for file_source in files_to_upload:
+            try:
+                item_id, folder_id_used = upload_to_athena(
+                    gc=gc,
+                    file_source=file_source,
+                    folder_id=folder_id
+                )
+                results['uploaded_files'].append({
+                    'file': os.path.basename(file_source),
+                    'item_id': item_id,
+                    'folder_id': folder_id_used
+                })
+                results['total_uploaded'] += 1
+            except Exception as e:
+                print(f"Failed to upload {file_source} to Fusion backend: {e}")
+                results['failed_files'].append({
+                    'file': os.path.basename(file_source),
+                    'error': str(e)
+                })
+                results['total_failed'] += 1
+
     # Clean up temporary folder if needed
     if temp_folder and temp_folder.exists():
         #print(f"\n{'='*80}")

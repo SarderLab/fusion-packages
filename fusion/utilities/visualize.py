@@ -1,29 +1,100 @@
 
 from fusion.utilities.utility import download_to_fusion_backend
 from IPython.display import IFrame
+import os
 
 
-def visualize_wsi(gc, hubmap_id=None, item_id=None, user=None):
+def visualize_wsi(gc, hubmap_id=None, item_id=None, user=None, dir_path=None):
     """
-    Visualize HubMAP WSI data either by HubMAP ID or direct item_id.
-    
+    Visualize WSI data in HistomicsUI.
+
     Args:
         gc: Girder client instance.
         hubmap_id (str): The HubMAP ID to fetch and visualize data for.
-        item_id (str): Direct item_id from fusion backend to visualize in HistomicUI.
-        user (str): Athena username for creating/finding folders (required if using hubmap_id).
-    
+        item_id (str): Direct item_id from fusion backend to visualize in HistomicsUI.
+        user (str): Athena username (required if using hubmap_id or dir_path).
+        dir_path (str): Local directory path previously pushed to Fusion; looks up
+                        the corresponding Athena folder by directory name and lets
+                        the user pick a WSI item to visualize.
+
     Returns:
-        IFrame with HistomicUI viewer for selected file
+        IFrame with HistomicsUI viewer for selected file
     """
-    
-    if not item_id and not hubmap_id:
+
+    if not item_id and not hubmap_id and not dir_path:
         if user:
             return IFrame("https://fusionpub.rc.ufl.edu/histomics", "100%", "800px")
         else:
             raise ValueError("Please provide a user parameter.")
     
-    # Case 1: item_id provided - direct visualization
+    # Case 1: dir_path provided - look up folder by directory name and pick a WSI
+    if dir_path:
+        if not user:
+            raise ValueError("Please provide a user parameter when using dir_path.")
+
+        folder_name = os.path.basename(os.path.normpath(dir_path))
+        print(f"Looking up Athena folder '{folder_name}' for user '{user}'...")
+
+        users = gc.get('/user', parameters={'text': user})
+        if not users:
+            raise ValueError(f"No user found matching '{user}'")
+        user_id = users[0]['_id']
+
+        folders = gc.get('/folder', parameters={'parentType': 'user', 'parentId': user_id})
+        folder = next((f for f in folders if f.get('name') == folder_name), None)
+
+        if not folder:
+            raise ValueError(f"No Athena folder named '{folder_name}' found. Make sure you have pushed the directory first.")
+
+        folder_id = folder['_id']
+        print(f"Found folder '{folder_name}' (ID: {folder_id})")
+
+        items = gc.get('/item', parameters={'folderId': folder_id})
+
+        wsi_files = [
+            {'file': item.get('name', ''), 'item_id': item.get('_id', '')}
+            for item in items
+            if item.get('name', '').endswith(('.ome.tiff', '.ome.tif', '.tiff', '.tif'))
+        ]
+
+        if not wsi_files:
+            print("No WSI files found in the folder.")
+            return None
+
+        print(f"\n{'=' * 80}")
+        print("AVAILABLE WSI FILES")
+        print(f"{'=' * 80}")
+        for idx, f in enumerate(wsi_files, 1):
+            print(f"{idx}. {f['file']}  (item_id: {f['item_id']})")
+        print(f"{'=' * 80}")
+
+        if len(wsi_files) == 1:
+            print("\nOnly one file available. Auto-selecting...")
+            selected = wsi_files[0]
+        else:
+            while True:
+                try:
+                    choice = input(f"\nSelect a file to visualize (1-{len(wsi_files)}): ").strip()
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(wsi_files):
+                        selected = wsi_files[idx]
+                        break
+                    else:
+                        print(f"Please enter a number between 1 and {len(wsi_files)}")
+                except ValueError:
+                    print("Please enter a valid number")
+                except KeyboardInterrupt:
+                    print("\nVisualization cancelled.")
+                    return None
+
+        print(f"\nOpening '{selected['file']}' in HistomicsUI...")
+        return IFrame(
+            f"https://fusionpub.rc.ufl.edu//histomics#?image={selected['item_id']}",
+            width="100%",
+            height="800px"
+        )
+
+    # Case 2: item_id provided - direct visualization
     if item_id:
         print("Visualizing item in HistomicUI...")
         try:
