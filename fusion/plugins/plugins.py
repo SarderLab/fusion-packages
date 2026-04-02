@@ -39,7 +39,6 @@ def _print_new_log_lines(log_path, last_pos):
     except Exception:
         return last_pos
 
-
 def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
     """Stream live log output. Blocks until job finishes or Ctrl+C."""
     last_pos = 0
@@ -79,7 +78,6 @@ def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
         print(f"To reconnect:  check_job_status('{job_id}', 'live_logs')")
         print(f"To cancel:     !scancel {job_id}")
 
-
 def _stream_girder_log(job_id, job_name, gc, poll_interval=10):
     """Stream live log output from a Girder job. Blocks until job finishes or Ctrl+C."""
     last_count = 0
@@ -105,7 +103,6 @@ def _stream_girder_log(job_id, job_name, gc, poll_interval=10):
     except KeyboardInterrupt:
         print(f"\n{job_name} [{job_id}] is still running on JupyterHub.")
         print(f"To reconnect:  check_job_status('{job_id}', 'live_logs')")
-
 
 def check_job_status(job_id=None, mode=None):
     """
@@ -205,8 +202,6 @@ def check_job_status(job_id=None, mode=None):
     except KeyboardInterrupt:
         print("\nStopped watching.")
 
-
-
 def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
     """
     Called immediately after sbatch submission.
@@ -245,7 +240,6 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
         print(f"\nDetached. Job {job_id} is running in the background.")
         print(f"\nTo check status later, run:")
         print(f"    check_job_status('{job_id}')")
-
 
 def _get_jupyter_slurm_resources():
     """Return fixed Slurm resource limits for analysis jobs."""
@@ -294,7 +288,7 @@ def run_apptainer_analysis():
     # annotations_subdir: if set, also auto-derives --annotations_dir for that subfolder.
     container_configs = {
         "multicompartment_segmentation": {
-            "image": "dsrithad/fusion1_decoupled:multicompartment-segmentation-notebook",
+            "image": "sarderlab/fusion1.0_decoupled:multi_compartment_segmentation",
             "script": "/opt/MultiC/multic/cli/MultiC/MultiCLocal.py",
             "params": ["input_file", "modelfile"],
             "path_params": {"input_file", "modelfile", "output_dir"},
@@ -303,7 +297,7 @@ def run_apptainer_analysis():
             "input_depth": 2
         },
         "frozen_glom_segmentation": {
-            "image": "dsrithad/fusion1_decoupled:frozenglom-segmentation-notebook",
+            "image": "sarderlab/fusion1.0_decoupled:frozen_glom_segmentation",
             "script": "/opt/GlomSegmentation/FrozenGlomSegmentation/cli/GlomSeg/GlomSegLocal.py",
             "params": ["input_image", "model_file"],
             "path_params": {"input_image", "model_file", "output_dir"},
@@ -312,7 +306,7 @@ def run_apptainer_analysis():
             "input_depth": 2
         },
         "feature_extraction": {
-            "image": "dsrithad/fusion1_decoupled:feature-extraction-notebook",
+            "image": "sarderlab/fusion1.0_decoupled:pathomic_feature_extraction",
             "script": "/opt/FExtract/fextract/cli/PathomicsFE/PathomicsFELocal.py",
             "params": ["input_image"],
             "path_params": {"input_image", "annotations_dir", "output_dir"},
@@ -322,7 +316,7 @@ def run_apptainer_analysis():
             "input_depth": 2
         },
         "label_transfer": {
-            "image": "dsrithad/fusion1_decoupled:10x-visium-analysis-notebook",
+            "image": "sarderlab/fusion1.0_decoupled:10x_visium_analysis",
             "script": "/opt/Visium_Analysis/Visium_Analysis/cli/LabelTransferLocal/LabelTransferLocal.py",
             "params": ["counts_file", "reference"],
             "path_params": {"counts_file", "reference", "output_dir"},
@@ -334,7 +328,7 @@ def run_apptainer_analysis():
             "input_depth": 1
         },
         "spot_annotation": {
-            "image": "dsrithad/fusion1_decoupled:10x-visium-analysis-notebook",
+            "image": "sarderlab/fusion1.0_decoupled:10x_visium_analysis",
             "script": "/opt/Visium_Analysis/Visium_Analysis/cli/SpotAnnotationLocal/SpotAnnotationLocal.py",
             "params": ["input_file", "cell_reference_file"],
             "path_params": {"input_file", "cell_reference_file", "output_dir"},
@@ -345,7 +339,7 @@ def run_apptainer_analysis():
             "skip_script_params": {"input_file"}
         },
         "spatial_aggregation": {
-            "image": "dsrithad/fusion1_decoupled:spatial-aggregation-notebook",
+            "image": "sarderlab/fusion1.0_decoupled:ftu_spot_aggregation",
             "script": "/opt/Spatial-Omics-Plugins/SpatialAggregation/cli/Aggregate/AggregateLocal.py",
             "params": ["base_annotation"],
             "path_params": {"base_annotation", "agg_annotations", "output_dir"},
@@ -647,7 +641,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     job_configs = {
     '1': {
         'name': 'Multi-Compartment Segmentation',
-        'path': ["sarderlab/fusion_v1","MultiCompartmentSegmentation", "MultiC"],
+        'path': ["sarderlab/fusion1.0","MultiCompartmentSegmentation", "MultiC"],
         'input_param': 'input_file',
         'params': {
             'modelfile': '6967ee7b413ffaf54798bc8e'
@@ -655,7 +649,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     },
     '2': {
         'name': 'Frozen Glomerulus Segmentation',
-        'path': ["sarderlab/fusion_v1", "FrozenGlomSegmentation", "GlomSeg"],
+        'path': ["sarderlab/fusion1.0", "FrozenGlomSegmentation", "GlomSeg"],
         'input_param': 'input_image',
         'params': {
             'model_file': '6967ef12413ffaf54798bc91',
@@ -669,7 +663,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     },
     '3': {
         'name': 'Feature Extraction',
-        'path': ["sarderlab/fusion_v1", "PathomicFeatureExtraction", "PathomicsFE"],
+        'path': ["sarderlab/fusion1.0", "PathomicFeatureExtraction", "PathomicsFE"],
         'input_param': 'input_image',
         'params': {
             'type': 'Feature_Pipeline',
@@ -687,7 +681,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     },
     '4': {
         'name': 'Label Transfer (10X Visium - step 1)',
-        'path': ["sarderlab/fusion_v1", "10X_VisiumAnalysis", "LabelTransfer"],
+        'path': ["sarderlab/fusion1.0", "10X_VisiumAnalysis", "LabelTransfer"],
         'input_param': 'input_image',
         'params': {
             'organ': 'KPMP Atlas Kidney',
@@ -696,7 +690,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     },
     '5': {
         'name': 'Spot Annotation (10X Visium - step 2)',
-        'path': ["sarderlab/fusion_v1", "10X_VisiumAnalysis", "SpotAnnotation"],
+        'path': ["sarderlab/fusion1.0", "10X_VisiumAnalysis", "SpotAnnotation"],
         'input_param': 'input_file',
         'params': {
             'cell_reference_file': '69892c0b7d7fb0fd9933751f'
@@ -704,7 +698,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     },
     '6': {
         'name': 'FTU Spot Aggregation',
-        'path': ["sarderlab/fusion_v1", "FTUSpotAggregation", "Aggregate"],
+        'path': ["sarderlab/fusion1.0", "FTUSpotAggregation", "Aggregate"],
         'input_param': 'input_image',
         'params': {}
     }
