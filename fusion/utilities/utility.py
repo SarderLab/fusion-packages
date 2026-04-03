@@ -274,8 +274,6 @@ def download_to_workspace(hubmap_id, all=False, histology=False, visium=False, t
         "datasets": fetch_result.get('datasets', [])
     }
 
-
-
 def convert_ome_tiff_to_rgb_compressed(input_path):
     
     input_path = Path(input_path)
@@ -449,8 +447,6 @@ def optimize_workspace_wsi(source, delete_originals=False):
             print(f"  - {Path(file).name}")
     
     return results
-
-
 
 def create_or_get_athena_folder(gc, user_name, hubmap_id=None, file_name=None, folder_name=None):
     """
@@ -919,8 +915,28 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
     
     return results
 
+def download_assets_from_fusion(gc):
+    assets = {
+        "fusion_demo_notebooks/References": [
+            "6989338b7d7fb0fd9933755c",
+            "697baf5f13bbccd3003a6435",
+        ],
+        "fusion_demo_notebooks/Models": [
+            "6967ef12413ffaf54798bc91",
+            "6967ee7b413ffaf54798bc8e",
+        ],
+    }
 
-
+    for output_dir, file_ids in assets.items():
+        folder_name = os.path.basename(output_dir)
+        print(f"\nDownloading {folder_name} to {output_dir}/")
+        os.makedirs(output_dir, exist_ok=True)
+        for file_id in file_ids:
+            file_info = gc.get(f"/file/{file_id}")
+            out_path = os.path.join(output_dir, file_info["name"])
+            print(f"  - {file_info['name']} ({file_info['size']} bytes)...")
+            gc.downloadFile(file_id, path=out_path)
+        print(f"  Done.")
 
 KEY_COLS = 'data.contrast nuclei,data.contrast eosinophilic,data.condition,item.name,item.id,annotation.id,annotationelement.id'
 #----------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -950,7 +966,6 @@ def get_available_annotations(gc, path):
     print("-" * 80)
     return annotation_dict
 
-
 def get_available_columns(gc, path, annotation_name):
     r = gc.get("resource/lookup", parameters={'path': path})
     uuid = r['_id']
@@ -968,7 +983,6 @@ def get_available_columns(gc, path, annotation_name):
         print(f"{i}. {col}")
     print("-" * 80)
     return columns
-
 
 def get_annotation_data(gc, path, annotation_name, columns=KEY_COLS):
     

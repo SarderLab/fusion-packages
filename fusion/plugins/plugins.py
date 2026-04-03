@@ -1,4 +1,4 @@
-from fusion.utilities.utility import download_to_fusion_backend
+from fusion.utilities.utility import download_to_fusion_backend, download_assets_from_fusion
 import tifffile
 import numpy as np
 import os
@@ -934,6 +934,8 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         dir_path (str): Local directory path; all files in the directory will be uploaded and processed (optional, fusion only).
     """
     if backend == 'notebook':
+        if gc is not None:
+            download_assets_from_fusion(gc)
         return run_apptainer_analysis()
     elif backend == 'fusion':
         if gc is None or user_name is None:
