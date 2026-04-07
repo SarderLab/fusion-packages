@@ -917,11 +917,11 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
 
 def download_assets_from_fusion(gc):
     assets = {
-        "fusion_demo_notebooks/References": [
+        "References": [
             "6989338b7d7fb0fd9933755c",
             "697baf5f13bbccd3003a6435",
         ],
-        "fusion_demo_notebooks/Models": [
+        "Models": [
             "6967ef12413ffaf54798bc91",
             "6967ee7b413ffaf54798bc8e",
         ],

@@ -1,4 +1,4 @@
-from fusion.utilities.utility import download_to_fusion_backend, download_assets_from_fusion
+from fusion.utilities.utility import download_to_fusion_backend, download_assets_from_fusion, download_to_workspace
 import tifffile
 import numpy as np
 import os
@@ -336,7 +336,6 @@ def run_apptainer_analysis():
             "output_subdir": "Files",
             "primary_input": "input_file",
             "input_depth": 2,
-            "skip_script_params": {"input_file"}
         },
         "spatial_aggregation": {
             "image": "sarderlab/fusion1.0_decoupled:ftu_spot_aggregation",
@@ -926,9 +925,9 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
 
     Args:
         backend (str): 'notebook' to run via Slurm/Apptainer, 'fusion' to run via the Fusion backend.
-        gc: Girder client instance (required when backend='fusion').
+        gc: Girder client instance (optional for 'notebook', required for 'fusion').
         user_name (str): Athena username (required when backend='fusion').
-        hubmap_id (str): HubMAP ID to process (optional, fusion only).
+        hubmap_id (str): HubMAP ID to process. For 'notebook', auto-downloads the dataset to the workspace. For 'fusion', uploads it to the Fusion backend.
         file_path (str): Local file path to process (optional, fusion only).
         file_paths (list): List of local file paths to process (optional, fusion only).
         dir_path (str): Local directory path; all files in the directory will be uploaded and processed (optional, fusion only).
@@ -936,6 +935,8 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
     if backend == 'notebook':
         if gc is not None:
             download_assets_from_fusion(gc)
+        if hubmap_id is not None:
+            download_to_workspace(hubmap_id)
         return run_apptainer_analysis()
     elif backend == 'fusion':
         if gc is None or user_name is None:
