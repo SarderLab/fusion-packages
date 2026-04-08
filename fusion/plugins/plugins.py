@@ -541,12 +541,40 @@ def run_apptainer_analysis():
     # For label_transfer, clean up the expr_components folder created as a side effect.
     # For spot_annotation, rename the output *_annotations.json to Spots.json.
     cleanup_cmd = ""
+    pre_cmd = ""
     if analysis_type == "label_transfer" and primary in user_params:
         abs_dataset_root = os.path.join(workspace_path, dataset_rel)
         cleanup_cmd = f"\nrm -rf {abs_dataset_root}/expr_components"
     elif analysis_type == "spot_annotation" and primary in user_params:
         abs_files_dir = os.path.join(workspace_path, dataset_rel, "Files")
         cleanup_cmd = f"\nmv {abs_files_dir}/*_annotations.json {abs_files_dir}/Spots.json"
+    elif analysis_type == "spatial_aggregation" and 'agg_annotations' in user_params:
+        import json as _json
+        abs_output_dir = os.path.join(workspace_path, user_params['output_dir'])
+        mkdir_lines = []
+        for ann_path in user_params['agg_annotations']:
+            abs_ann_path = os.path.join(workspace_path, ann_path)
+            try:
+                with open(abs_ann_path) as _f:
+                    ann_data = _json.load(_f)
+                ann_name = (ann_data.get('annotation', {}).get('name', '')
+                            or ann_data.get('name', ''))
+                if '/' in ann_name:
+                    subdir = os.path.join(abs_output_dir, os.path.dirname(ann_name))
+                    mkdir_lines.append(f"mkdir -p {subdir}")
+            except Exception:
+                pass
+        if mkdir_lines:
+            pre_cmd = "\n" + "\n".join(mkdir_lines)
+        # After container runs, flatten any subdirs in Aggregated_FTU back to the top level
+        # e.g. arteries/arterioles_aggregated.json -> arteries_arterioles_aggregated.json
+        cleanup_cmd = f"""
+find {abs_output_dir} -mindepth 2 -type f | while IFS= read -r filepath; do
+    rel="${{filepath#{abs_output_dir}/}}"
+    newname="${{rel//\\//_}}"
+    mv "$filepath" "{abs_output_dir}/$newname"
+done
+find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 
     # create a submission script content
     slurm_script_content = f"""#!/bin/bash
@@ -559,7 +587,7 @@ def run_apptainer_analysis():
 
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
-
+{pre_cmd}
 {apptainer_command}{cleanup_cmd}
 """
     
