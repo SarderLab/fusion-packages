@@ -243,7 +243,7 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
 
 def _get_jupyter_slurm_resources():
     """Return fixed Slurm resource limits for analysis jobs."""
-    return "12:00:00", "48gb"
+    return "12:00:00", "16gb"
 
 def get_hive_workspace_root():
     """
@@ -583,7 +583,7 @@ find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 #SBATCH --time={time_limit}
 #SBATCH --mem={mem_limit}
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=8
 
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
