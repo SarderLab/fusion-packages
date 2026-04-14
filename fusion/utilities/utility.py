@@ -7,6 +7,37 @@ import requests
 from pathlib import Path
 import shutil
 
+
+def download_folder_zip(gc, folder_id, output_dir="."):
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get the folder info so we can name the zip file correctly
+    folder_info = gc.get(f"/folder/{folder_id}")
+    folder_name = folder_info["name"]
+    zip_filename = os.path.join(output_dir, f"{folder_name}.zip")
+    
+    # Construct the full URL using the Girder client's base URL
+    url = f"{gc.urlBase}/folder/{folder_id}/download"
+    
+    # Pass the Girder token in the headers for authentication
+    headers = {"Girder-Token": gc.token}
+    
+    print(f"Downloading folder '{folder_name}' as a zip archive...")
+    
+    # Make the raw streaming request to the endpoint
+    response = requests.get(url, headers=headers, stream=True)
+    response.raise_for_status()
+    
+    # Write the zip file to your local machine in chunks
+    with open(zip_filename, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+                
+    print(f"Successfully downloaded: {zip_filename}")
+    return zip_filename
+
+
 def download_from_fusion(gc, resource_id, resource_type="file", output_dir="."):
     if resource_type == "file":
         info = gc.get(f"/file/{resource_id}")
