@@ -970,6 +970,48 @@ def download_assets_from_fusion(gc):
             gc.downloadFile(file_id, path=out_path)
         print(f"  Done.")
 
+def download_reference_files_from_fusion(gc):
+    assets = {
+        "References": [
+            "6989338b7d7fb0fd9933755c",
+            "697baf5f13bbccd3003a6435",
+        ]
+    }
+    for output_dir, file_ids in assets.items():
+        print(f"\nDownloading {output_dir} to {output_dir}/")
+        os.makedirs(output_dir, exist_ok=True)
+        for file_id in file_ids:
+            file_info = gc.get(f"/file/{file_id}")
+            out_path = os.path.join(output_dir, file_info["name"])
+            print(f"  - {file_info['name']} ({file_info['size']} bytes)...")
+            gc.downloadFile(file_id, path=out_path)
+        print(f"  Done.")
+
+def download_model_files_from_fusion(gc):
+    assets = {
+        "Models": [
+            "6967ef12413ffaf54798bc91",
+            "6967ee7b413ffaf54798bc8e",
+        ]
+    }
+    for output_dir, file_ids in assets.items():
+        print(f"\nDownloading {output_dir} to {output_dir}/")
+        os.makedirs(output_dir, exist_ok=True)
+        for file_id in file_ids:
+            file_info = gc.get(f"/file/{file_id}")
+            out_path = os.path.join(output_dir, file_info["name"])
+            print(f"  - {file_info['name']} ({file_info['size']} bytes)...")
+            gc.downloadFile(file_id, path=out_path)
+        print(f"  Done.")
+
+def download_file_from_fusion(gc, file_id, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    file_info = gc.get(f"/file/{file_id}")
+    out_path = os.path.join(output_dir, file_info["name"])
+    print(f"Downloading {file_info['name']} ({file_info['size']} bytes)...")
+    gc.downloadFile(file_id, path=out_path)
+    print(f"Saved to {out_path}")
+
 KEY_COLS = 'data.contrast nuclei,data.contrast eosinophilic,data.condition,item.name,item.id,annotation.id,annotationelement.id'
 #----------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Fetch data from Athena
@@ -1039,10 +1081,4 @@ def get_annotation_data(gc, path, annotation_name, columns=KEY_COLS):
         print(f"No annotations found with name: {annotation_name}")
         df = None
     
-
     return df
-
-
-
-
-
