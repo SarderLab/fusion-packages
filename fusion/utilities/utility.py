@@ -8,36 +8,6 @@ from pathlib import Path
 import shutil
 
 
-def download_from_fusion(gc, resource_id, resource_type="file", output_dir="."):
-    if resource_type == "file":
-        info = gc.get(f"/file/{resource_id}")
-        file_name = info["name"]
-        
-        # Use the file name as the folder name
-        folder_name = os.path.splitext(file_name)[0]
-        folder_path = f"./{folder_name}"
-        os.makedirs(folder_path, exist_ok=True)
-        
-        # Set the final output path inside the new folder
-        out_path = os.path.join(folder_path, file_name)
-        
-        print(f"Downloading file: {file_name} ({info.get('size', 'unknown')} bytes) to {out_path}...")
-        gc.downloadFile(resource_id, path=out_path)
-        
-    elif resource_type == "item":
-        os.makedirs(output_dir, exist_ok=True)
-        info = gc.get(f"/item/{resource_id}")
-        item_name = info["name"]
-        
-        print(f"Downloading item: {item_name} to {output_dir}/...")
-        gc.downloadItem(resource_id, output_dir)
-        out_path = os.path.join(output_dir, item_name)
-        
-    else:
-        raise ValueError("resource_type must be either 'file' or 'item'")
-        
-    print("Done.")
-    return out_path
 
 def fetch_data(hubmap_id, all=False, histology=False, visium=False):
     """
