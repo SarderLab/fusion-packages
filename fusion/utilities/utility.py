@@ -14,7 +14,8 @@ def download_from_fusion(gc, resource_id, resource_type="file", output_dir="."):
         file_name = info["name"]
         
         # Use the file name as the folder name
-        folder_path = f"./{file_name}"
+        folder_name = os.path.splitext(file_name)[0]
+        folder_path = f"./{folder_name}"
         os.makedirs(folder_path, exist_ok=True)
         
         # Set the final output path inside the new folder
