@@ -9,7 +9,7 @@ def download_demo_notebooks():
     # GitHub raw URLs
     base_url = "https://raw.githubusercontent.com/SarderLab/fusion-packages/main/fusion/"
     notebooks = [
-        "fusion_demo.ipynb"
+        "fusion_classroom_demo.ipynb"
     ]
     
     print("Downloading fusion demo notebooks")
