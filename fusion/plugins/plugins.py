@@ -6,6 +6,7 @@ import subprocess
 import re
 import shutil
 import time
+import anndata
 
 # Session store for submitted Slurm jobs
 _SLURM_JOBS = {}   # job_id -> {'name': str, 'log': str, 'start': float}
@@ -274,6 +275,40 @@ def get_hive_workspace_root():
     print(f"Warning: 'user-workspaces' structure not found in {current_path}.")
     return current_path
 
+def sanitize_h5ad_obsm(h5ad_path):
+    
+    """
+    Loads an h5ad file and removes any non-numeric columns from the 'DeepScence'
+    obsm DataFrame entry. Overwrites the file in place if changes were made.
+    Returns True if the file was modified, False otherwise.
+    """
+    adata = anndata.read_h5ad(h5ad_path)
+
+    if 'DeepScence' not in adata.obsm:
+        print(f"  No 'DeepScence' entry found in obsm — no changes needed.")
+        return False
+
+    entry = adata.obsm['DeepScence']
+
+    if not isinstance(entry, pd.DataFrame):
+        print(f"  'DeepScence' is not a DataFrame — no changes needed.")
+        return False
+
+    string_cols = [
+        col for col in entry.columns
+        if not pd.api.types.is_numeric_dtype(entry[col])
+    ]
+
+    if not string_cols:
+        print(f"  'DeepScence' has no non-numeric columns — no changes needed.")
+        return False
+
+    print(f"  Dropping non-numeric column(s) from 'DeepScence': {string_cols}")
+    adata.obsm['DeepScence'] = entry.drop(columns=string_cols)
+    adata.write_h5ad(h5ad_path)
+    print(f"  Overwrote: {h5ad_path}")
+    return True
+
 def run_apptainer_analysis():
     """
     Interactive function to generate and submit analysis tasks using Apptainer containers via Slurm.
@@ -388,6 +423,16 @@ def run_apptainer_analysis():
                     print(f"{param} is required. Please enter a value.")
     else:
         print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
+    
+    if analysis_type == "label_transfer" and "counts_file" in user_params:
+        h5ad_abs = os.path.join(workspace_path, user_params["counts_file"].lstrip(os.sep))
+        print("\nChecking h5ad file for non-numeric 'DeepScence' obsm columns...")
+        print("─" * 55)
+        try:
+            sanitize_h5ad_obsm(h5ad_abs)
+        except Exception as e:
+            print(f"  Warning: Could not process {h5ad_abs}: {e}")
+        print("─" * 55)
 
     # Auto-derive output_dir (and annotations_dir if needed) from the primary input path.
     # The primary input is something like: fusion_demo_notebooks/datasets/HBM355.CWFF.355/ometiff-pyramids/file.tif
@@ -947,6 +992,8 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
 #   check_job_status()                        # live-refreshing queue view
 #   check_job_status('job_id', 'live_logs')   # stream log output for a job
 # ─────────────────────────────────────────────────────────────────────────────
+
+
 def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=None, file_paths=None, dir_path=None):
     """
     Unified entry point for running analysis tasks.
@@ -960,12 +1007,16 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         file_paths (list): List of local file paths to process (optional, fusion only).
         dir_path (str): Local directory path; all files in the directory will be uploaded and processed (optional, fusion only).
     """
+    print("Running from:", __file__)
+    
     if backend == 'notebook':
         if gc is not None:
             download_assets_from_fusion(gc)
         if hubmap_id is not None:
             download_to_workspace(hubmap_id)
+        
         return run_apptainer_analysis()
+    
     elif backend == 'fusion':
         if gc is None or user_name is None:
             raise ValueError("backend='fusion' requires both 'gc' and 'user_name' arguments.")
