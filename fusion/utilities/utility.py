@@ -773,9 +773,11 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
         "uploaded_files": [],
         "failed_files": [],
         "total_uploaded": 0,
-        "total_failed": 0
+        "total_failed": 0,
+        "tif_item_id" : None
     }
     
+    tif_item_id = None
     if hubmap_id:
         temp_download = True
     
@@ -935,7 +937,6 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
             # ----------------------------------------------------------------
             # Step 1: Find and upload the .tif file
             # ----------------------------------------------------------------
-            tif_item_id = None
             image_folder = None
             for candidate in ["ometiff-pyramids", "image", "images"]:
                 candidate_path = os.path.join(dir_path, candidate)
@@ -1238,6 +1239,9 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
     print(f"Total uploaded:  {results['total_uploaded']}")
     print(f"Total failed:    {results['total_failed']}")
     print(f"{'='*80}")'''
+    
+    if tif_item_id:
+        results["tif_item_id"] = tif_item_id
     
     return results
 
