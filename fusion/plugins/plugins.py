@@ -286,13 +286,13 @@ def sanitize_h5ad_obsm(h5ad_path):
     adata = anndata.read_h5ad(h5ad_path)
 
     if 'DeepScence' not in adata.obsm:
-        print(f"  No 'DeepScence' entry found in obsm — no changes needed.")
+        #print(f"  No 'DeepScence' entry found in obsm — no changes needed.")
         return False
 
     entry = adata.obsm['DeepScence']
 
     if not isinstance(entry, pd.DataFrame):
-        print(f"  'DeepScence' is not a DataFrame — no changes needed.")
+        #print(f"  'DeepScence' is not a DataFrame — no changes needed.")
         return False
 
     string_cols = [
@@ -301,13 +301,13 @@ def sanitize_h5ad_obsm(h5ad_path):
     ]
 
     if not string_cols:
-        print(f"  'DeepScence' has no non-numeric columns — no changes needed.")
+        #print(f"  'DeepScence' has no non-numeric columns — no changes needed.")
         return False
 
-    print(f"  Dropping non-numeric column(s) from 'DeepScence': {string_cols}")
+    #print(f"  Dropping non-numeric column(s) from 'DeepScence': {string_cols}")
     adata.obsm['DeepScence'] = entry.drop(columns=string_cols)
     adata.write_h5ad(h5ad_path)
-    print(f"  Overwrote: {h5ad_path}")
+    #print(f"  Overwrote: {h5ad_path}")
     return True
 
 def run_apptainer_analysis():
@@ -427,13 +427,13 @@ def run_apptainer_analysis():
     
     if analysis_type == "label_transfer" and "counts_file" in user_params:
         h5ad_abs = os.path.join(workspace_path, user_params["counts_file"].lstrip(os.sep))
-        print("\nChecking h5ad file for non-numeric 'DeepScence' obsm columns...")
-        print("─" * 55)
+        #print("\nChecking h5ad file for non-numeric 'DeepScence' obsm columns...")
+        #print("─" * 55)
         try:
             sanitize_h5ad_obsm(h5ad_abs)
         except Exception as e:
             print(f"  Warning: Could not process {h5ad_abs}: {e}")
-        print("─" * 55)
+        #print("─" * 55)
 
     # Auto-derive output_dir (and annotations_dir if needed) from the primary input path.
     # The primary input is something like: fusion_demo_notebooks/datasets/HBM355.CWFF.355/ometiff-pyramids/file.tif
