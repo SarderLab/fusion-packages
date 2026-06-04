@@ -7,6 +7,7 @@ import re
 import shutil
 import time
 import anndata
+import pandas as pd
 
 # Session store for submitted Slurm jobs
 _SLURM_JOBS = {}   # job_id -> {'name': str, 'log': str, 'start': float}
