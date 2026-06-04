@@ -6,9 +6,10 @@ import pandas as pd
 import requests
 from pathlib import Path
 import shutil
+import mimetypes
 
 
-def download_folder_zip(gc, folder_id, output_dir="."):
+def download_folder_zip_from_fusion_backend(gc, folder_id, output_dir="."):
     os.makedirs(output_dir, exist_ok=True)
     
     # Get the folder info so we can name the zip file correctly
@@ -38,7 +39,7 @@ def download_folder_zip(gc, folder_id, output_dir="."):
     return zip_filename
 
 
-def download_from_fusion(gc, resource_id, resource_type="file", output_dir="."):
+def download_from_fusion_to_workspace(gc, resource_id, resource_type="file", output_dir="."):
     if resource_type == "file":
         info = gc.get(f"/file/{resource_id}")
         file_name = info["name"]
@@ -70,7 +71,7 @@ def download_from_fusion(gc, resource_id, resource_type="file", output_dir="."):
     return out_path
 
 
-def fetch_data(hubmap_id, all=False, histology=False, visium=False):
+def fetch_data_info_from_HuBMAP(hubmap_id, all=False, histology=False, visium=False):
     """
     Fetch data files from HubMAP for a given dataset.
     
@@ -197,7 +198,7 @@ def fetch_data(hubmap_id, all=False, histology=False, visium=False):
     
     return result
 
-def download_to_workspace(hubmap_id, all=False, histology=False, visium=False, temp_download=False, Optimize_WSI=True, delete_originals=True):
+def HuBMAP_to_workspace_download(hubmap_id, all=False, histology=False, visium=False, temp_download=False, Optimize_WSI=True, delete_originals=True):
     """
     Download files from HubMAP to the local workspace.
     
@@ -214,7 +215,7 @@ def download_to_workspace(hubmap_id, all=False, histology=False, visium=False, t
     """
     # Fetch data from HubMAP
     print(f"Fetching data for HubMAP ID: {hubmap_id}")
-    fetch_result = fetch_data(hubmap_id, all=all, histology=histology, visium=visium)
+    fetch_result = fetch_data_info_from_HuBMAP(hubmap_id, all=all, histology=histology, visium=visium)
 
     if temp_download:
         delete_originals = True
@@ -511,7 +512,7 @@ def optimize_workspace_wsi(source, delete_originals=False):
     
     return results
 
-def create_or_get_athena_folder(gc, user_name, hubmap_id=None, file_name=None, folder_name=None):
+def create_or_get_folder_from_fusion_backend(gc, user_name, hubmap_id=None, file_name=None, folder_name=None):
     """
     Create or get an Athena folder for uploading files.
     
@@ -678,7 +679,7 @@ def create_or_get_athena_folder(gc, user_name, hubmap_id=None, file_name=None, f
     
     return folder_id, True
 
-def upload_to_athena(gc, file_source, folder_id):
+def upload_to_fusion_backend_helper(gc, file_source, folder_id):
     """
     Upload a file to Athena from local path.
     
@@ -745,11 +746,11 @@ def file_exists(gc, folder_id, filename):
             return item.get('_id')
     return None
 
-def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file_paths=None,
-                       dir_path=None, all=False, histology=False, visium=False, temp_download=False,
-                       folder_id=None, athena_url='https://fusionpub.rc.ufl.edu//api/v1'):
+def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file_paths=None, is_visium=True, is_xenium=False,
+                       dir_path=None, all=False, histology=False, visium=False, temp_download=False, is_analysis_result=False,
+                       folder_id=None, fusion_dsa_instance_url='https://fusionpub.rc.ufl.edu//api/v1'):
     """
-    Download files to Athena from HubMAP or local files.
+    Upload the files to Athena from HubMAP or local files.
 
     Args:
         gc: Girder client instance.
@@ -763,7 +764,7 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
         visium (bool): If True, download only h5ad files from HubMAP.
         temp_download (bool): If True, download to temp folder and clean up after upload.
         folder_id (str): Existing Athena folder ID to upload to.
-        athena_url (str): Athena API base URL.
+        fusion_dsa_instance_url (str): Athena API base URL.
 
     Returns:
         dict: Upload results with item IDs and statistics.
@@ -772,9 +773,11 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
         "uploaded_files": [],
         "failed_files": [],
         "total_uploaded": 0,
-        "total_failed": 0
+        "total_failed": 0,
+        "tif_item_id" : None
     }
     
+    tif_item_id = None
     if hubmap_id:
         temp_download = True
     
@@ -784,13 +787,13 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
     # Create or get folder if not provided
     if not folder_id:
         if hubmap_id:
-            folder_id, should_upload = create_or_get_athena_folder(gc, user, hubmap_id=hubmap_id)
+            folder_id, should_upload = create_or_get_folder_from_fusion_backend(gc, user, hubmap_id=hubmap_id)
         elif file_path:
-            folder_id, should_upload = create_or_get_athena_folder(gc, user, file_name=os.path.basename(file_path))
+            folder_id, should_upload = create_or_get_folder_from_fusion_backend(gc, user, file_name=os.path.basename(file_path))
         elif file_paths:
-            folder_id, should_upload = create_or_get_athena_folder(gc, user)
+            folder_id, should_upload = create_or_get_folder_from_fusion_backend(gc, user)
         elif dir_path:
-            folder_id, should_upload = create_or_get_athena_folder(gc, user, folder_name=os.path.basename(os.path.normpath(dir_path)))
+            folder_id, should_upload = create_or_get_folder_from_fusion_backend(gc, user, folder_name=os.path.basename(os.path.normpath(dir_path)))
         else:
             print("Error: Must provide either hubmap_id, file_path, file_paths, or dir_path")
             return {"error": "No input provided"}
@@ -800,7 +803,7 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
     # Check if user cancelled
     if folder_id is None:
         print("Upload cancelled by user.")
-        return {"error": "Operation cancelled"}
+        return {"error": "Operation cancelled, no folder_id available."}
     
     # If user chose to use existing folder without uploading, return early
     if not should_upload:
@@ -817,7 +820,7 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
         print(f"\nProcessing HubMAP ID: {hubmap_id}")
         
         # Download to local workspace first
-        download_result = download_to_workspace(
+        download_result = HuBMAP_to_workspace_download(
             hubmap_id=hubmap_id,
             all=all,
             histology=histology,
@@ -849,7 +852,7 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
         # Upload each file
         for file_source in files_to_upload:
             try:
-                item_id, folder_id_used = upload_to_athena(
+                item_id, folder_id_used = upload_to_fusion_backend_helper(
                     gc=gc,
                     file_source=file_source,
                     folder_id=folder_id
@@ -876,7 +879,7 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
         print(f"Uploading single file: {file_path}")
         
         try:
-            item_id, folder_id_used = upload_to_athena(
+            item_id, folder_id_used = upload_to_fusion_backend_helper(
                 gc=gc,
                 file_source=file_path,
                 folder_id=folder_id
@@ -904,7 +907,7 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
         
         for file_source in file_paths:
             try:
-                item_id, folder_id_used = upload_to_athena(
+                item_id, folder_id_used = upload_to_fusion_backend_helper(
                     gc=gc,
                     file_source=file_source,
                     folder_id=folder_id
@@ -928,34 +931,295 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
         if not os.path.isdir(dir_path):
             print(f"Error: '{dir_path}' is not a valid directory")
             return {"error": f"Invalid directory: {dir_path}"}
+        
 
-        files_to_upload = [
-            os.path.join(root, f)
-            for root, _, files in os.walk(dir_path)
-            for f in files
-        ]
-        print(f"\nUploading {len(files_to_upload)} file(s) from directory: {dir_path}")
+        if is_analysis_result and is_visium:
+            # ----------------------------------------------------------------
+            # Step 1: Find and upload the .tif file
+            # ----------------------------------------------------------------
+            image_folder = None
+            for candidate in ["ometiff-pyramids", "image", "images"]:
+                candidate_path = os.path.join(dir_path, candidate)
+                if os.path.isdir(candidate_path):
+                    image_folder = candidate_path
+                    break
 
-        for file_source in files_to_upload:
+            if image_folder is None:
+                print("Error: No image folder (ometiff-pyramids/image/images) found in directory.")
+                return {"error": "No image folder found in directory."}
+
+            tif_files = [f for f in os.listdir(image_folder) if f.endswith(".tif")]
+            if not tif_files:
+                print("Error: image folder should have one .tif file")
+                return {"error": "image folder should have one .tif file"}
+
+            if len(tif_files) == 1:
+                tif_to_upload = os.path.join(image_folder, tif_files[0])
+            else:
+                rgb_compressed = [f for f in tif_files if f.endswith("_rgb_compressed.tif")]
+                if not rgb_compressed:
+                    print("Error: image folder should have one .tif file")
+                    return {"error": "image folder should have one .tif file"}
+                tif_to_upload = os.path.join(image_folder, rgb_compressed[0])
+
+            print(f"\nUploading TIF: {tif_to_upload}")
             try:
-                item_id, folder_id_used = upload_to_athena(
+                tif_item_id, folder_id_used = upload_to_fusion_backend_helper(
                     gc=gc,
-                    file_source=file_source,
+                    file_source=tif_to_upload,
                     folder_id=folder_id
                 )
                 results['uploaded_files'].append({
-                    'file': os.path.basename(file_source),
-                    'item_id': item_id,
+                    'file': os.path.basename(tif_to_upload),
+                    'item_id': tif_item_id,
                     'folder_id': folder_id_used
                 })
                 results['total_uploaded'] += 1
             except Exception as e:
-                print(f"Failed to upload {file_source} to Fusion backend: {e}")
+                print(f"Failed to upload TIF {tif_to_upload}: {e}")
                 results['failed_files'].append({
-                    'file': os.path.basename(file_source),
+                    'file': os.path.basename(tif_to_upload),
                     'error': str(e)
                 })
                 results['total_failed'] += 1
+                return {"error": f"TIF upload failed, cannot proceed: {e}"}
+
+            # ----------------------------------------------------------------
+            # Step 2: Upload all .h5ad files in the root of dir_path
+            # ----------------------------------------------------------------
+            h5ad_files = [
+                os.path.join(dir_path, f)
+                for f in os.listdir(dir_path)
+                if f.endswith(".h5ad") and os.path.isfile(os.path.join(dir_path, f))
+            ]
+            print(f"\nUploading {len(h5ad_files)} .h5ad file(s)")
+            for h5ad_file in h5ad_files:
+                try:
+                    item_id, folder_id_used = upload_to_fusion_backend_helper(
+                        gc=gc,
+                        file_source=h5ad_file,
+                        folder_id=folder_id
+                    )
+                    results['uploaded_files'].append({
+                        'file': os.path.basename(h5ad_file),
+                        'item_id': item_id,
+                        'folder_id': folder_id_used
+                    })
+                    results['total_uploaded'] += 1
+                except Exception as e:
+                    print(f"Failed to upload {h5ad_file}: {e}")
+                    results['failed_files'].append({
+                        'file': os.path.basename(h5ad_file),
+                        'error': str(e)
+                    })
+                    results['total_failed'] += 1
+
+            # ----------------------------------------------------------------
+            # Step 3: Upload Segmented_FTU .json files as annotation
+            # ----------------------------------------------------------------
+            segmented_ftu_path = os.path.join(dir_path, "Segmented_FTU")
+            if os.path.isdir(segmented_ftu_path):
+                seg_json_files = [
+                    os.path.join(segmented_ftu_path, f)
+                    for f in os.listdir(segmented_ftu_path)
+                    if f.endswith(".json")
+                ]
+                print(f"\nUploading {len(seg_json_files)} Segmented_FTU annotation(s)")
+                for json_file in seg_json_files:
+                    try:
+                        with open(json_file, "r") as f:
+                            annotation_content = json.load(f)
+
+                        gc.post(
+                            f"/annotation/item/{tif_item_id}",
+                            json=annotation_content
+                        )
+                        
+                        results['uploaded_files'].append({
+                            'file': os.path.basename(json_file),
+                            'item_id': tif_item_id,
+                            'folder_id': folder_id
+                        })
+                        results['total_uploaded'] += 1
+                    except Exception as e:
+                        print(f"Failed to upload annotation {json_file}: {e}")
+                        results['failed_files'].append({
+                            'file': os.path.basename(json_file),
+                            'error': str(e)
+                        })
+                        results['total_failed'] += 1
+
+            # ----------------------------------------------------------------
+            # Step 4: Upload Spots.json from files/ as annotation
+            # ----------------------------------------------------------------
+            files_folder_path = os.path.join(dir_path, "files")
+            if os.path.isdir(files_folder_path):
+                spots_json = os.path.join(files_folder_path, "Spots.json")
+                if os.path.isfile(spots_json):
+                    print(f"\nUploading Spots.json as annotation")
+                    try:
+                        with open(spots_json, "r") as f:
+                            annotation_content = json.load(f)
+
+                        gc.post(
+                            f"/annotation/item/{tif_item_id}",
+                            json=annotation_content
+                        )
+                        
+                        results['uploaded_files'].append({
+                            'file': 'Spots.json',
+                            'item_id': tif_item_id,
+                            'folder_id': folder_id
+                        })
+                        results['total_uploaded'] += 1
+                    except Exception as e:
+                        print(f"Failed to upload Spots.json: {e}")
+                        results['failed_files'].append({
+                            'file': 'Spots.json',
+                            'error': str(e)
+                        })
+                        results['total_failed'] += 1
+
+            # ----------------------------------------------------------------
+            # Step 5: Upload Aggregated_FTU .json files as annotations
+            # ----------------------------------------------------------------
+            aggregated_ftu_path = os.path.join(dir_path, "Aggregated_FTU")
+            if os.path.isdir(aggregated_ftu_path):
+                agg_json_files = [
+                    os.path.join(aggregated_ftu_path, f)
+                    for f in os.listdir(aggregated_ftu_path)
+                    if f.endswith(".json")
+                ]
+                print(f"\nUploading {len(agg_json_files)} Aggregated_FTU annotation(s)")
+                for json_file in agg_json_files:
+                    try:
+                        with open(json_file, "r") as f:
+                            annotation_content = json.load(f)
+
+                        gc.post(
+                            f"/annotation/item/{tif_item_id}",
+                            json=annotation_content
+                        )
+                        
+                        results['uploaded_files'].append({
+                            'file': os.path.basename(json_file),
+                            'item_id': tif_item_id,
+                            'folder_id': folder_id
+                        })
+                        results['total_uploaded'] += 1
+                    except Exception as e:
+                        print(f"Failed to upload annotation {json_file}: {e}")
+                        results['failed_files'].append({
+                            'file': os.path.basename(json_file),
+                            'error': str(e)
+                        })
+                        results['total_failed'] += 1
+                        
+            # ----------------------------------------------------------------
+            # Step 6: Upload metadata.json to item metadata
+            # ----------------------------------------------------------------
+            if os.path.isdir(files_folder_path):
+                metadata_json = os.path.join(files_folder_path, "metadata.json")
+                if os.path.isfile(metadata_json):
+                    print(f"\nUploading metadata.json to item metadata")
+                    try:
+                        with open(metadata_json, "r") as f:
+                            metadata_content = json.load(f)
+                        gc.put(f"/item/{tif_item_id}/metadata", json=metadata_content)
+                        results['uploaded_files'].append({
+                            'file': 'metadata.json',
+                            'item_id': tif_item_id,
+                            'folder_id': folder_id
+                        })
+                        results['total_uploaded'] += 1
+                    except Exception as e:
+                        print(f"Failed to upload metadata.json: {e}")
+                        results['failed_files'].append({
+                            'file': 'metadata.json',
+                            'error': str(e)
+                        })
+                        results['total_failed'] += 1
+
+            # ----------------------------------------------------------------
+            # Step 7: Upload remaining files in files/ folder via /file API
+            # ----------------------------------------------------------------
+            if os.path.isdir(files_folder_path):
+                excluded_files = {"Spots.json", "metadata.json"}
+                remaining_files = [
+                    os.path.join(files_folder_path, f)
+                    for f in os.listdir(files_folder_path)
+                    if f not in excluded_files and os.path.isfile(os.path.join(files_folder_path, f))
+                ]
+                print(f"\nUploading {len(remaining_files)} remaining file(s) from files/ folder")
+                for file_path in remaining_files:
+                    file_name = os.path.basename(file_path)
+                    file_size = os.path.getsize(file_path)
+                    mime_type, _ = mimetypes.guess_type(file_path)
+                    mime_type = mime_type or "application/octet-stream"
+                    try:
+                        # Initialize the upload
+                        upload_response = gc.post(
+                            "/file",
+                            parameters={
+                                "parentType": "item",
+                                "parentId": tif_item_id,
+                                "name": file_name,
+                                "size": file_size,
+                                "mimeType": mime_type
+                            }
+                        )
+                        upload_id = upload_response["_id"]
+
+                        # Send the file content
+                        with open(file_path, "rb") as f:
+                            gc.post(
+                                f"/file/chunk",
+                                parameters={"uploadId": upload_id, "offset": 0},
+                                data=f.read()
+                            )
+                        results['uploaded_files'].append({
+                            'file': file_name,
+                            'item_id': tif_item_id,
+                            'folder_id': folder_id
+                        })
+                        results['total_uploaded'] += 1
+                    except Exception as e:
+                        print(f"Failed to upload {file_name}: {e}")
+                        results['failed_files'].append({
+                            'file': file_name,
+                            'error': str(e)
+                        })
+                        results['total_failed'] += 1
+
+        else:
+
+            files_to_upload = [
+                os.path.join(root, f)
+                for root, _, files in os.walk(dir_path)
+                for f in files
+            ]
+            print(f"\nUploading {len(files_to_upload)} file(s) from directory: {dir_path}")
+
+            for file_source in files_to_upload:
+                try:
+                    item_id, folder_id_used = upload_to_fusion_backend_helper(
+                        gc=gc,
+                        file_source=file_source,
+                        folder_id=folder_id
+                    )
+                    results['uploaded_files'].append({
+                        'file': os.path.basename(file_source),
+                        'item_id': item_id,
+                        'folder_id': folder_id_used
+                    })
+                    results['total_uploaded'] += 1
+                except Exception as e:
+                    print(f"Failed to upload {file_source} to Fusion backend: {e}")
+                    results['failed_files'].append({
+                        'file': os.path.basename(file_source),
+                        'error': str(e)
+                    })
+                    results['total_failed'] += 1
 
     # Clean up temporary folder if needed
     if temp_folder and temp_folder.exists():
@@ -976,30 +1240,10 @@ def download_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, fi
     print(f"Total failed:    {results['total_failed']}")
     print(f"{'='*80}")'''
     
+    if tif_item_id:
+        results["tif_item_id"] = tif_item_id
+    
     return results
-
-def download_assets_from_fusion(gc):
-    assets = {
-        "References": [
-            "6989338b7d7fb0fd9933755c",
-            "697baf5f13bbccd3003a6435",
-        ],
-        "Models": [
-            "6967ef12413ffaf54798bc91",
-            "6967ee7b413ffaf54798bc8e",
-        ],
-    }
-
-    for output_dir, file_ids in assets.items():
-        folder_name = os.path.basename(output_dir)
-        print(f"\nDownloading {folder_name} to {output_dir}/")
-        os.makedirs(output_dir, exist_ok=True)
-        for file_id in file_ids:
-            file_info = gc.get(f"/file/{file_id}")
-            out_path = os.path.join(output_dir, file_info["name"])
-            print(f"  - {file_info['name']} ({file_info['size']} bytes)...")
-            gc.downloadFile(file_id, path=out_path)
-        print(f"  Done.")
 
 def download_reference_files_from_fusion(gc):
     assets = {
