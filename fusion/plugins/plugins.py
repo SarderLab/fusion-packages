@@ -1,4 +1,4 @@
-from fusion.utilities.utility import upload_to_fusion_backend, download_assets_from_fusion, HuBMAP_to_workspace_download
+from fusion.utilities.utility import upload_to_fusion_backend, download_model_files_from_fusion, download_reference_files_from_fusion, HuBMAP_to_workspace_download
 import tifffile
 import numpy as np
 import os
@@ -1012,7 +1012,8 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
     
     if backend == 'notebook':
         if gc is not None:
-            download_assets_from_fusion(gc)
+            download_reference_files_from_fusion(gc)
+            download_model_files_from_fusion(gc)
         if hubmap_id is not None:
             HuBMAP_to_workspace_download(hubmap_id)
         
