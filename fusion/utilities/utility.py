@@ -928,6 +928,10 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
     
     # 4: Upload all files from a local directory
     elif dir_path:
+        print("dir_path repr:", repr(dir_path))
+        print("cwd:", os.getcwd())
+        print("dir_path exists or not:", os.path.exists(dir_path))
+        print("isdir:", os.path.isdir(dir_path))
         if not os.path.isdir(dir_path):
             print(f"Error: '{dir_path}' is not a valid directory")
             return {"error": f"Invalid directory: {dir_path}"}
