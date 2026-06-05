@@ -1,4 +1,4 @@
-from fusion.utilities.utility import download_to_fusion_backend, download_assets_from_fusion, download_to_workspace
+from fusion.utilities.utility import upload_to_fusion_backend, download_assets_from_fusion, HuBMAP_to_workspace_download
 import tifffile
 import numpy as np
 import os
@@ -784,7 +784,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     
     # Upload to Athena using the utility function
     #print("Uploading file(s) to Fusion backend...")
-    upload_result = download_to_fusion_backend(
+    upload_result = upload_to_fusion_backend(
         gc=gc,
         hubmap_id=hubmap_id,
         user=user_name,
@@ -1014,7 +1014,7 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         if gc is not None:
             download_assets_from_fusion(gc)
         if hubmap_id is not None:
-            download_to_workspace(hubmap_id)
+            HuBMAP_to_workspace_download(hubmap_id)
         
         return run_apptainer_analysis()
     
