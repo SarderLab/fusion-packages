@@ -158,10 +158,11 @@ def check_job_status(job_id=None, mode=None):
 
     try:
         while True:
-            if use_clear:
+            if mode=='live' and use_clear:
                 clear_output(wait=True)
 
-            print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s  |  To cancel: !scancel <job_id>\n")
+            if mode=='live':
+                print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s  |  To cancel: !scancel <job_id>\n")
 
             # ── Slurm section ────────────────────────────────────────────────
             print(f"{'─' * 70}")
@@ -198,6 +199,9 @@ def check_job_status(job_id=None, mode=None):
 
             print()
             print("To stream live logs:  check_job_status('<job_id>', 'live_logs')")
+
+            if mode != 'live':
+                break
 
             time.sleep(2)
 
