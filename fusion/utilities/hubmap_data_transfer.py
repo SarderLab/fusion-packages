@@ -329,23 +329,32 @@ def _start_gcp(wait_seconds: int = 120) -> None:
 
 
 def _handle_session_reauth(output: str) -> bool:
-    """ Returns True if reauth was needed and attempted."""
-    if "Session reauthentication required" not in output:
-        return False
-    
-    # Extract the identity ID from the output
     match = re.search(r"globus session update (\S+)", output)
     if not match:
         raise RuntimeError("Session reauth required but could not extract identity ID from output.")
     
     identity_id = match.group(1)
     print(f"[globus] Session expired. Re-authenticating with identity: {identity_id}")
-    
-    reauth = subprocess.run(
+
+    # Get the auth URL first
+    result = subprocess.run(
         ["globus", "session", "update", "--no-local-server", identity_id],
+        input="\n",  # send empty input to get the URL printed
         text=True,
+        capture_output=True,
     )
-    if reauth.returncode != 0:
+    print(result.stdout)
+
+    # Let the user paste the code via Python input()
+    auth_code = input("Paste the Authorization Code here: ").strip()
+
+    result2 = subprocess.run(
+        ["globus", "session", "update", "--no-local-server", identity_id],
+        input=auth_code + "\n",
+        text=True,
+        capture_output=True,
+    )
+    if result2.returncode != 0:
         raise RuntimeError("[globus] Re-authentication failed.")
     
     print("[globus] Re-authentication successful.")
