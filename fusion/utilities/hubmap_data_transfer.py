@@ -387,6 +387,11 @@ def transfer(
     manifest_path: Union[str, None] = None,
     protected: bool = False,
 ) -> None:
+
+    print("params -------------------------------------------------------------------------1")
+    print("hubmap_id = ", hubmap_id)
+    print("manifest_path = ", manifest_path)
+    
     if destination is None:
         if isinstance(hubmap_id, str):
             destination = f"./{hubmap_id}"
@@ -400,13 +405,37 @@ def transfer(
     destination = os.path.abspath(os.path.expanduser(destination))
     os.makedirs(destination, exist_ok=True)
 
+    print("params  -------------------------------------------------------------------------2")
+    print("hubmap_id = ", hubmap_id)
+    print("manifest_path = ", manifest_path)
+    
     _ensure_required_tools()
+
+    print("params  -------------------------------------------------------------------------3")
+    print("hubmap_id = ", hubmap_id)
+    print("manifest_path = ", manifest_path)
+    
     _setup_gcp_once()
+
+    print("params -------------------------------------------------------------------------4")
+    print("hubmap_id = ", hubmap_id)
+    print("manifest_path = ", manifest_path)
+    
     _set_gcp_allowed_path_to_cwd()
+
+    print("params  -------------------------------------------------------------------------5")
+    print("hubmap_id = ", hubmap_id)
+    print("manifest_path = ", manifest_path)
+    
     _ensure_globus_login()
+
+    print("params  -------------------------------------------------------------------------6")
+    print("hubmap_id = ", hubmap_id)
+    print("manifest_path = ", manifest_path)
+    
     _ensure_hubmap_login()
     
-    print("params before _resolv_manifest")
+    print("params  -------------------------------------------------------------------------7")
     print("hubmap_id = ", hubmap_id)
     print("manifest_path = ", manifest_path)
     
