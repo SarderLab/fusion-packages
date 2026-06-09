@@ -444,17 +444,3 @@ def transfer(
         )
 
     print(f"[gcp] Transfer complete. Data should be in: {destination}")
-    
-if __name__ == "__main__":
-    hubmap_input = input("Enter HuBMAP ID(s), comma-separated if multiple: ").strip()
-
-    hubmap_ids = [hid.strip() for hid in hubmap_input.split(",") if hid.strip()]
-
-    if not hubmap_ids:
-        raise ValueError("No HuBMAP ID provided.")
-
-    hubmap_id = hubmap_ids[0] if len(hubmap_ids) == 1 else hubmap_ids
-
-    transfer(
-        hubmap_id=hubmap_id
-    )
