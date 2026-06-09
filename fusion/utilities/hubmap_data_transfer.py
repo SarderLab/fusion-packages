@@ -383,8 +383,8 @@ def setup() -> None:
 
 def transfer(
     destination: str,
-    hubmap_id: Union[str, list, None] = None,
-    manifest_path: Union[str, None] = None,
+    hubmap_id: Union[str, list, None] = False,
+    manifest_path: Union[str, None] = False,
     protected: bool = False,
 ) -> None:
 
