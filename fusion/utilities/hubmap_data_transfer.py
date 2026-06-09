@@ -474,6 +474,7 @@ def transfer(
         output = (result.stdout or "") + "\n" + (result.stderr or "")
         print(output)
 
+
         if "Session reauthentication required" in output:
             if attempt == 0:
                 _handle_session_reauth(output)
