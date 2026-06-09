@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import time
+import re
 from typing import Union
 
 
@@ -327,6 +328,30 @@ def _start_gcp(wait_seconds: int = 120) -> None:
     )
 
 
+def _handle_session_reauth(output: str) -> bool:
+    """ Returns True if reauth was needed and attempted."""
+    if "Session reauthentication required" not in output:
+        return False
+    
+    # Extract the identity ID from the output
+    match = re.search(r"globus session update (\S+)", output)
+    if not match:
+        raise RuntimeError("Session reauth required but could not extract identity ID from output.")
+    
+    identity_id = match.group(1)
+    print(f"[globus] Session expired. Re-authenticating with identity: {identity_id}")
+    
+    reauth = subprocess.run(
+        ["globus", "session", "update", "--no-local-server", identity_id],
+        text=True,
+    )
+    if reauth.returncode != 0:
+        raise RuntimeError("[globus] Re-authentication failed.")
+    
+    print("[globus] Re-authentication successful.")
+    return True
+
+
 def _build_manifest(hubmap_ids: list, manifest_dir: str) -> str:
     os.makedirs(manifest_dir, exist_ok=True)
 
@@ -388,9 +413,6 @@ def transfer(
     protected: bool = False,
 ) -> None:
 
-    print("params -------------------------------------------------------------------------1")
-    print("hubmap_id = ", hubmap_id)
-    print("manifest_path = ", manifest_path)
     
     if destination is None:
         if isinstance(hubmap_id, str):
@@ -405,39 +427,11 @@ def transfer(
     destination = os.path.abspath(os.path.expanduser(destination))
     os.makedirs(destination, exist_ok=True)
 
-    print("params  -------------------------------------------------------------------------2")
-    print("hubmap_id = ", hubmap_id)
-    print("manifest_path = ", manifest_path)
-    
     _ensure_required_tools()
-
-    print("params  -------------------------------------------------------------------------3")
-    print("hubmap_id = ", hubmap_id)
-    print("manifest_path = ", manifest_path)
-    
     _setup_gcp_once()
-
-    print("params -------------------------------------------------------------------------4")
-    print("hubmap_id = ", hubmap_id)
-    print("manifest_path = ", manifest_path)
-    
     _set_gcp_allowed_path_to_cwd()
-
-    print("params  -------------------------------------------------------------------------5")
-    print("hubmap_id = ", hubmap_id)
-    print("manifest_path = ", manifest_path)
-    
     _ensure_globus_login()
-
-    print("params  -------------------------------------------------------------------------6")
-    print("hubmap_id = ", hubmap_id)
-    print("manifest_path = ", manifest_path)
-    
     _ensure_hubmap_login()
-    
-    print("params  -------------------------------------------------------------------------7")
-    print("hubmap_id = ", hubmap_id)
-    print("manifest_path = ", manifest_path)
     
     manifest = _resolve_manifest(
         hubmap_id=hubmap_id,
@@ -455,15 +449,6 @@ def transfer(
     print(f"[gcp] Starting {'protected' if protected else 'public'} transfer...")
     print("[gcp] Command:", " ".join(cmd))
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-    )
-
-    output = (result.stdout or "") + "\n" + (result.stderr or "")
-    print(output)
-
     error_indicators = [
         "Globus CLI Error",
         "Transfer API Error",
@@ -475,24 +460,23 @@ def transfer(
         "Error:",
     ]
 
-    if result.returncode != 0 or any(error in output for error in error_indicators):
-        raise RuntimeError(
-            "[gcp] Transfer failed. See output above. "
-            "Check GCP allowed path, endpoint connectivity, and dataset access."
-        )
+    for attempt in range(2):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        print(output)
 
-    print(f"[gcp] Transfer complete. Data should be in: {destination}")
-    
-if __name__ == "__main__":
-    hubmap_input = input("Enter HuBMAP ID(s), comma-separated if multiple: ").strip()
+        if "Session reauthentication required" in output:
+            if attempt == 0:
+                _handle_session_reauth(output)
+                continue
+            else:
+                raise RuntimeError("[globus] Re-authentication succeeded but transfer still failed.")
 
-    hubmap_ids = [hid.strip() for hid in hubmap_input.split(",") if hid.strip()]
+        if result.returncode != 0 or any(error in output for error in error_indicators):
+            raise RuntimeError(
+                "[gcp] Transfer failed. See output above. "
+                "Check GCP allowed path, endpoint connectivity, and dataset access."
+            )
 
-    if not hubmap_ids:
-        raise ValueError("No HuBMAP ID provided.")
-
-    hubmap_id = hubmap_ids[0] if len(hubmap_ids) == 1 else hubmap_ids
-
-    transfer(
-        hubmap_id=hubmap_id
-    )
+        print(f"[gcp] Transfer complete. Data should be in: {destination}")
+        break
