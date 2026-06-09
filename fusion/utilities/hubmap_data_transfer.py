@@ -382,6 +382,16 @@ def transfer(
     manifest_path: Union[str, None] = None,
     protected: bool = False,
 ) -> None:
+    if destination is None:
+        if isinstance(hubmap_id, str):
+            destination = f"./{hubmap_id}"
+        elif isinstance(hubmap_id, list):
+            destination = "./hubmap_downloads"
+        elif manifest_path is not None:
+            destination = "./hubmap_downloads"
+        else:
+            raise ValueError("destination could not be inferred. Provide hubmap_id or manifest_path.")
+
     destination = os.path.abspath(os.path.expanduser(destination))
     os.makedirs(destination, exist_ok=True)
 
@@ -436,9 +446,15 @@ def transfer(
     print(f"[gcp] Transfer complete. Data should be in: {destination}")
     
 if __name__ == "__main__":
-    hubmap_id = input("Enter HuBMAP ID: ").strip()
+    hubmap_input = input("Enter HuBMAP ID(s), comma-separated if multiple: ").strip()
+
+    hubmap_ids = [hid.strip() for hid in hubmap_input.split(",") if hid.strip()]
+
+    if not hubmap_ids:
+        raise ValueError("No HuBMAP ID provided.")
+
+    hubmap_id = hubmap_ids[0] if len(hubmap_ids) == 1 else hubmap_ids
 
     transfer(
-        hubmap_id=hubmap_id,
-        destination=f"./{hubmap_id}"
+        hubmap_id=hubmap_id
     )
