@@ -348,6 +348,11 @@ def _resolve_manifest(
     manifest_path: Union[str, None],
     manifest_dir: str,
 ) -> str:
+    
+    print("params in _resolv_manifest")
+    print("hubmap_id = ", hubmap_id)
+    print("manifest_path = ", manifest_path)
+    
     if hubmap_id is not None and manifest_path is not None:
         raise ValueError("Provide either hubmap_id or manifest_path, not both.")
 
@@ -400,7 +405,11 @@ def transfer(
     _set_gcp_allowed_path_to_cwd()
     _ensure_globus_login()
     _ensure_hubmap_login()
-
+    
+    print("params before _resolv_manifest")
+    print("hubmap_id = ", hubmap_id)
+    print("manifest_path = ", manifest_path)
+    
     manifest = _resolve_manifest(
         hubmap_id=hubmap_id,
         manifest_path=manifest_path,
