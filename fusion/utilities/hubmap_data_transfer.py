@@ -422,6 +422,11 @@ def transfer(
     protected: bool = False,
 ) -> None:
 
+    print("\n[debug] transfer() called with:")
+    print(f"[debug] destination   = {destination!r} | type = {type(destination).__name__}")
+    print(f"[debug] hubmap_id     = {hubmap_id!r} | type = {type(hubmap_id).__name__}")
+    print(f"[debug] manifest_path = {manifest_path!r} | type = {type(manifest_path).__name__}")
+    print(f"[debug] protected     = {protected!r} | type = {type(protected).__name__}")
     
     if destination is None:
         if isinstance(hubmap_id, str):
@@ -441,6 +446,11 @@ def transfer(
     _set_gcp_allowed_path_to_cwd()
     _ensure_globus_login()
     _ensure_hubmap_login()
+
+    print("\n[debug] Before _resolve_manifest():")
+    print(f"[debug] hubmap_id     = {hubmap_id!r} | type = {type(hubmap_id).__name__}")
+    print(f"[debug] manifest_path = {manifest_path!r} | type = {type(manifest_path).__name__}")
+    print(f"[debug] manifest_dir  = {destination!r}")
     
     manifest = _resolve_manifest(
         hubmap_id=hubmap_id,
