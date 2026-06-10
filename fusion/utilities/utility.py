@@ -1052,7 +1052,7 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
             # ----------------------------------------------------------------
             # Step 4: Upload Spots.json from files/ as annotation
             # ----------------------------------------------------------------
-            files_folder_path = os.path.join(dir_path, "files")
+            files_folder_path = os.path.join(dir_path, "files" if os.path.isdir(os.path.join(dir_path, "files")) else "Files")
             if os.path.isdir(files_folder_path):
                 spots_json = os.path.join(files_folder_path, "Spots.json")
                 if os.path.isfile(spots_json):
