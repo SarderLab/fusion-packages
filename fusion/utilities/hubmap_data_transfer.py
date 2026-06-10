@@ -319,7 +319,7 @@ def _start_gcp(wait_seconds: int = 120) -> None:
         time.sleep(5)
 
     raise RuntimeError(
-        "[gcp] GCP did not become connected.\n"
+        "[gcp] GCP did not connect.\n"
         f"Last status:\n{last_status}\n\n"
         "Try manually:\n"
         f"  {binary} -stop\n"
