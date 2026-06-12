@@ -250,8 +250,8 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
 def _get_jupyter_slurm_resources(analysis_type=None):
     """Return fixed Slurm resource limits for analysis jobs."""
     if analysis_type=='label_transfer':
-        return "12:00:00", "64GB"
-    return "12:00:00", "16gb"
+        return "03:00:00", "64GB", 4
+    return "03:00:00", "16gb", 2
 
 def get_hive_workspace_root():
     """
@@ -532,7 +532,7 @@ def run_apptainer_analysis():
     job_name = analysis_type
 
     # Match resources to the current JupyterHub Slurm session
-    time_limit, mem_limit = _get_jupyter_slurm_resources(analysis_type)
+    time_limit, mem_limit, cpus = _get_jupyter_slurm_resources(analysis_type)
 
     apptainer_cmd_parts = [
         "apptainer exec",
@@ -635,7 +635,7 @@ find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 #SBATCH --time={time_limit}
 #SBATCH --mem={mem_limit}
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task={cpus}
 
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
