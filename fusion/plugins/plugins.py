@@ -1,4 +1,4 @@
-from fusion.utilities.utility import download_to_fusion_backend, download_assets_from_fusion, download_to_workspace
+from fusion.utilities.utility import upload_to_fusion_backend, download_model_files_from_fusion, download_reference_files_from_fusion, HuBMAP_to_workspace_download
 import tifffile
 import numpy as np
 import os
@@ -6,6 +6,8 @@ import subprocess
 import re
 import shutil
 import time
+import anndata
+import pandas as pd
 
 # Session store for submitted Slurm jobs
 _SLURM_JOBS = {}   # job_id -> {'name': str, 'log': str, 'start': float}
@@ -156,10 +158,11 @@ def check_job_status(job_id=None, mode=None):
 
     try:
         while True:
-            if use_clear:
+            if mode=='live' and use_clear:
                 clear_output(wait=True)
 
-            print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s  |  To cancel: !scancel <job_id>\n")
+            if mode=='live':
+                print(f"[{time.strftime('%H:%M:%S')}]  refreshing every 2s  |  To cancel: !scancel <job_id>\n")
 
             # ── Slurm section ────────────────────────────────────────────────
             print(f"{'─' * 70}")
@@ -196,6 +199,9 @@ def check_job_status(job_id=None, mode=None):
 
             print()
             print("To stream live logs:  check_job_status('<job_id>', 'live_logs')")
+
+            if mode != 'live':
+                break
 
             time.sleep(2)
 
@@ -241,9 +247,11 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
         print(f"\nTo check status later, run:")
         print(f"    check_job_status('{job_id}')")
 
-def _get_jupyter_slurm_resources():
+def _get_jupyter_slurm_resources(analysis_type=None):
     """Return fixed Slurm resource limits for analysis jobs."""
-    return "12:00:00", "16gb"
+    if analysis_type=='label_transfer':
+        return "03:00:00", "64GB", 4
+    return "03:00:00", "16gb", 2
 
 def get_hive_workspace_root():
     """
@@ -273,6 +281,40 @@ def get_hive_workspace_root():
     # Fallback if structure isn't found
     print(f"Warning: 'user-workspaces' structure not found in {current_path}.")
     return current_path
+
+def sanitize_h5ad_obsm(h5ad_path):
+    
+    """
+    Loads an h5ad file and removes any non-numeric columns from the 'DeepScence'
+    obsm DataFrame entry. Overwrites the file in place if changes were made.
+    Returns True if the file was modified, False otherwise.
+    """
+    adata = anndata.read_h5ad(h5ad_path)
+
+    if 'DeepScence' not in adata.obsm:
+        #print(f"  No 'DeepScence' entry found in obsm — no changes needed.")
+        return False
+
+    entry = adata.obsm['DeepScence']
+
+    if not isinstance(entry, pd.DataFrame):
+        #print(f"  'DeepScence' is not a DataFrame — no changes needed.")
+        return False
+
+    string_cols = [
+        col for col in entry.columns
+        if not pd.api.types.is_numeric_dtype(entry[col])
+    ]
+
+    if not string_cols:
+        #print(f"  'DeepScence' has no non-numeric columns — no changes needed.")
+        return False
+
+    #print(f"  Dropping non-numeric column(s) from 'DeepScence': {string_cols}")
+    adata.obsm['DeepScence'] = entry.drop(columns=string_cols)
+    adata.write_h5ad(h5ad_path)
+    #print(f"  Overwrote: {h5ad_path}")
+    return True
 
 def run_apptainer_analysis():
     """
@@ -388,6 +430,16 @@ def run_apptainer_analysis():
                     print(f"{param} is required. Please enter a value.")
     else:
         print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
+    
+    if analysis_type == "label_transfer" and "counts_file" in user_params:
+        h5ad_abs = os.path.join(workspace_path, user_params["counts_file"].lstrip(os.sep))
+        #print("\nChecking h5ad file for non-numeric 'DeepScence' obsm columns...")
+        #print("─" * 55)
+        try:
+            sanitize_h5ad_obsm(h5ad_abs)
+        except Exception as e:
+            print(f"  Warning: Could not process {h5ad_abs}: {e}")
+        #print("─" * 55)
 
     # Auto-derive output_dir (and annotations_dir if needed) from the primary input path.
     # The primary input is something like: fusion_demo_notebooks/datasets/HBM355.CWFF.355/ometiff-pyramids/file.tif
@@ -480,7 +532,7 @@ def run_apptainer_analysis():
     job_name = analysis_type
 
     # Match resources to the current JupyterHub Slurm session
-    time_limit, mem_limit = _get_jupyter_slurm_resources()
+    time_limit, mem_limit, cpus = _get_jupyter_slurm_resources(analysis_type)
 
     apptainer_cmd_parts = [
         "apptainer exec",
@@ -583,7 +635,7 @@ find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 #SBATCH --time={time_limit}
 #SBATCH --mem={mem_limit}
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task={cpus}
 
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
@@ -738,7 +790,7 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
     
     # Upload to Athena using the utility function
     #print("Uploading file(s) to Fusion backend...")
-    upload_result = download_to_fusion_backend(
+    upload_result = upload_to_fusion_backend(
         gc=gc,
         hubmap_id=hubmap_id,
         user=user_name,
@@ -947,6 +999,8 @@ def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=N
 #   check_job_status()                        # live-refreshing queue view
 #   check_job_status('job_id', 'live_logs')   # stream log output for a job
 # ─────────────────────────────────────────────────────────────────────────────
+
+
 def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=None, file_paths=None, dir_path=None):
     """
     Unified entry point for running analysis tasks.
@@ -960,12 +1014,17 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         file_paths (list): List of local file paths to process (optional, fusion only).
         dir_path (str): Local directory path; all files in the directory will be uploaded and processed (optional, fusion only).
     """
+    print("Running from:", __file__)
+    
     if backend == 'notebook':
         if gc is not None:
-            download_assets_from_fusion(gc)
+            download_reference_files_from_fusion(gc)
+            download_model_files_from_fusion(gc)
         if hubmap_id is not None:
-            download_to_workspace(hubmap_id)
+            HuBMAP_to_workspace_download(hubmap_id)
+        
         return run_apptainer_analysis()
+    
     elif backend == 'fusion':
         if gc is None or user_name is None:
             raise ValueError("backend='fusion' requires both 'gc' and 'user_name' arguments.")
