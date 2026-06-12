@@ -247,8 +247,10 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
         print(f"\nTo check status later, run:")
         print(f"    check_job_status('{job_id}')")
 
-def _get_jupyter_slurm_resources():
+def _get_jupyter_slurm_resources(analysis_type=None):
     """Return fixed Slurm resource limits for analysis jobs."""
+    if analysis_type=='label_transfer':
+        return "12:00:00", "64GB"
     return "12:00:00", "16gb"
 
 def get_hive_workspace_root():
@@ -530,7 +532,7 @@ def run_apptainer_analysis():
     job_name = analysis_type
 
     # Match resources to the current JupyterHub Slurm session
-    time_limit, mem_limit = _get_jupyter_slurm_resources()
+    time_limit, mem_limit = _get_jupyter_slurm_resources(analysis_type)
 
     apptainer_cmd_parts = [
         "apptainer exec",
