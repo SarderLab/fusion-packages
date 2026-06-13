@@ -15,35 +15,35 @@ FUSION++ brings together the full spatial biology analysis pipeline — from raw
 
 ## Key Features
 
-**Easy Data Access**
+- **Easy Data Access**
 Direct integration with the HuBMAP Data Portal lets you fetch datasets using a single HuBMAP ID — no manual downloads or tool setup required.
 
-**Streamlined Workflow**
+- **Streamlined Workflow**
 A guided, step-by-step notebook walks you from data fetch → analysis → visualization → annotation → custom plotting. Each section is self-contained and collapsible for easy navigation.
 
-**Custom Visualization**
+- **Custom Visualization**
 Go beyond default plots. FUSION++ supports richly customizable outputs, including spatial overlays, volcano plots, heatmaps, and cell-type composition charts — all built on your own analysis results.
 
-**Diverse Collaboration**
+- **Diverse Collaboration**
 Biologists, bioinformaticians, and data scientists can work side-by-side in the same JupyterHub notebook, with built-in documentation and flowcharts that make the platform an effective teaching resource.
 
-**Secure Enclave**
+- **Secure Enclave**
 All data and analysis outputs are persisted privately within your workspace. Your data never leaves your environment.
 
-**Training Platform**
+- **Training Platform**
 The notebook's integrated flowcharts, documentation, and step-by-step structure make it an excellent resource for teaching spatial multi-omics workflows.
 
 ---
 
 ## Installation
 
-**From a terminal:**
+- **From a terminal:**
 `pip install "git+https://github.com/SarderLab/fusion-packages.git"`
 
-**From inside a Jupyter notebook:**
+- **From inside a Jupyter notebook:**
 `!pip install "git+https://github.com/SarderLab/fusion-packages.git"`
 
-**Using the pre-configured kernel *(coming soon)*:** A dedicated kernel with all dependencies pre-installed will be published shortly — no manual installation needed.
+- **Using the pre-configured kernel *(coming soon)*:** A dedicated kernel with all dependencies pre-installed will be published shortly — no manual installation needed.
 
 ![FUSION++ Kernel](images/kernel_screenshot.png)
 
