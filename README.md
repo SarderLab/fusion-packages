@@ -9,7 +9,7 @@
 FUSION++ brings together the full spatial biology analysis pipeline — from raw data access to interactive visualization — inside a collaborative JupyterHub notebook environment. Whether you're a biologist exploring kidney tissue, a bioinformatician running segmentation workflows, or a data scientist building custom visualizations, FUSION++ provides the tools to work together in a single, secure, reproducible environment.
 
 
-![FUSION++ Workflow Diagram](fusion/images/Data Sources.png)
+![FUSION++ Workflow Diagram](fusion/images/data_sources.png)
 
 ---
 
@@ -57,10 +57,6 @@ After installation, simply import `fusion` in your notebook. This will automatic
 
 ## Notebook Walkthrough
 
-<!-- PLACEHOLDER: Notebook screenshot with Visualization tab open -->
-<!-- Replace the line below with your notebook screenshot -->
-![FUSION++ Notebook — Visualization Tab](images/notebook_visualization_tab.png)
-
 The demo notebook is organized into clearly labeled, collapsible sections:
 
 ### Section 1 — Initial Setup & Authentication
@@ -79,6 +75,8 @@ With just a few function calls, you can inspect the files available in your data
 
 Launch any analysis pipeline with a single function call, choosing to run either locally in the HuBMAP Workspace or on the FUSION Platform for heavier compute. Available workflows:
 
+![FUSION++ Custom Plots](fusion/images/analysis_order.jpg)
+
 | # | Workflow | Description |
 |---|----------|-------------|
 | 1 | Multi-Compartment Segmentation | Segments WSIs into 6 tissue compartments (cortical interstitium, medullary interstitium, non-sclerotic glomerulus, sclerotic glomerulus, tubule) |
@@ -92,14 +90,19 @@ Launch any analysis pipeline with a single function call, choosing to run either
 
 Interactively explore segmentation results and spatial data directly in the notebook. The visualization tab lets you overlay analysis outputs on whole-slide images and inspect FTU-level annotations without leaving your workspace.
 
+
+![FUSION++ Notebook — Visualization Tab](fusion/images/workspace.png)
+
+
 ---
 
 ## Custom Plots
 
 FUSION++ provides a fully flexible coding environment to bring your own analyses and produce publication-ready figures tailored to your research questions.
 
-![FUSION++ Custom Plots](images/custom_plots.png)
+![FUSION++ Custom Plots](fusion/images/Example_plot_volcano.png)
 
+![FUSION++ Custom Plots](fusion/images/Example_plot_heatmap.png)
 ---
 
 ## Output File Structure
