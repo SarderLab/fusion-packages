@@ -4,20 +4,21 @@ transfer.py
 Simple Globus Connect Personal (GCP) + HuBMAP transfer script.
 
 Important HiPerGator behavior:
-- GCP allowed path is forced to the user's current working directory.
-- So run this script from the /blue/... or /orange/... folder you want GCP to access.
+- GCP allowed path is set to the user's home directory (~).
+- hubmap-clt --destination (-d) is always relative to home directory by design.
+- So destination passed to transfer() must be under the home directory.
 
 Workflow:
 1. Ensure GCP, globus CLI, and hubmap-clt are available.
 2. Add GCP and current Python environment bin directory to PATH.
 3. Run GCP setup if needed.
-4. Set GCP config-paths to current working directory.
+4. Set GCP config-paths to home directory.
 5. Run Globus CLI login using: globus login --no-local-server
 6. Check globus whoami and ask user to confirm account.
 7. Run HuBMAP login using: hubmap-clt login --no-browser
 8. Build or use manifest.
 9. Stop previous GCP, start GCP again, wait until connected.
-10. Run hubmap-clt transfer.
+10. Run hubmap-clt transfer with -d <relative path from home>.
 """
 
 import glob
@@ -181,19 +182,14 @@ def _setup_gcp_once() -> None:
     print("[gcp-setup] GCP setup complete.\n")
 
 
-def _set_gcp_allowed_path_to_cwd() -> None:
+def _set_gcp_allowed_path() -> None:
     """
-    Set GCP allowed path to the current working directory.
+    Set GCP allowed path to the user's home directory.
 
-    Original code relied on the default:
-        ~,0,1
-
-    This function overwrites ~/.globusonline/lta/config-paths with:
-        <current working directory>,0,1
-
-    So run from /blue/... or /orange/... before calling transfer().
+    hubmap-clt resolves --destination (-d) relative to home by design,
+    so GCP must allow access to the full home directory tree.
     """
-    cwd = os.getcwd()
+    allowed_path = _home()
     config_dir = os.path.join(_home(), ".globusonline", "lta")
     config_path = os.path.join(config_dir, "config-paths")
 
@@ -204,10 +200,9 @@ def _set_gcp_allowed_path_to_cwd() -> None:
         )
 
     with open(config_path, "w") as f:
-        f.write(f"{cwd},0,1\n")
+        f.write(f"{allowed_path},0,1\n")
 
-    print("[gcp-setup] GCP allowed path set to current working directory:")
-    print(f"            {cwd}")
+    print(f"[gcp-setup] GCP allowed path set to: {allowed_path}")
 
 
 def _globus_whoami() -> Union[str, None]:
@@ -222,14 +217,49 @@ def _globus_whoami() -> Union[str, None]:
     account = result.stdout.strip()
     return account if account else None
 
+def _globus_login_no_local_server() -> None:
+    """
+    Run `globus login --no-local-server` in a Jupyter-safe way.
 
+    The Globus CLI prints a URL and then waits for an authorization code.
+    In Jupyter, direct subprocess interactivity can fail, so we:
+    1. Run once with empty input to force it to print the URL.
+    2. Ask for the auth code using Python input().
+    3. Run again and pass the auth code programmatically.
+    """
+
+    result = subprocess.run(
+        ["globus", "login", "--no-local-server"],
+        input="\n",
+        text=True,
+        capture_output=True,
+    )
+
+    output = (result.stdout or "") + "\n" + (result.stderr or "")
+    print(output)
+
+    auth_code = input("[globus] Paste the Authorization Code here: ").strip()
+
+    result2 = subprocess.run(
+        ["globus", "login", "--no-local-server"],
+        input=auth_code + "\n",
+        text=True,
+        capture_output=True,
+    )
+
+    output2 = (result2.stdout or "") + "\n" + (result2.stderr or "")
+    print(output2)
+
+    if result2.returncode != 0:
+        raise RuntimeError("[globus] Globus login failed.")
+        
 def _ensure_globus_login() -> None:
     account = _globus_whoami()
 
     if account is None:
         print("\n[globus] Globus CLI login required.")
         print("[globus] Open the URL in your browser, then paste the auth code here.\n")
-        _run(["globus", "login", "--no-local-server"])
+        _globus_login_no_local_server()
         account = _globus_whoami()
 
     if account is None:
@@ -242,8 +272,13 @@ def _ensure_globus_login() -> None:
         return
 
     print("[globus] Logging out. Please login with the correct account.")
-    _run(["globus", "logout"])
-    _run(["globus", "login", "--no-local-server"])
+    subprocess.run(
+    ["globus", "logout"],
+    input="y\n",
+    text=True,
+    check=True,
+    )
+    _globus_login_no_local_server()
 
     account = _globus_whoami()
     if account is None:
@@ -332,20 +367,18 @@ def _handle_session_reauth(output: str) -> bool:
     match = re.search(r"globus session update (\S+)", output)
     if not match:
         raise RuntimeError("Session reauth required but could not extract identity ID from output.")
-    
+
     identity_id = match.group(1)
     print(f"[globus] Session expired. Re-authenticating with identity: {identity_id}")
 
-    # Get the auth URL first
     result = subprocess.run(
         ["globus", "session", "update", "--no-local-server", identity_id],
-        input="\n",  # send empty input to get the URL printed
+        input="\n",
         text=True,
         capture_output=True,
     )
     print(result.stdout)
 
-    # Let the user paste the code via Python input()
     auth_code = input("Paste the Authorization Code here: ").strip()
 
     result2 = subprocess.run(
@@ -356,7 +389,7 @@ def _handle_session_reauth(output: str) -> bool:
     )
     if result2.returncode != 0:
         raise RuntimeError("[globus] Re-authentication failed.")
-    
+
     print("[globus] Re-authentication successful.")
     return True
 
@@ -382,11 +415,6 @@ def _resolve_manifest(
     manifest_path: Union[str, None],
     manifest_dir: str,
 ) -> str:
-    
-    print("params in _resolv_manifest")
-    print("hubmap_id = ", hubmap_id)
-    print("manifest_path = ", manifest_path)
-    
     if hubmap_id is not None and manifest_path is not None:
         raise ValueError("Provide either hubmap_id or manifest_path, not both.")
 
@@ -409,7 +437,7 @@ def _resolve_manifest(
 def setup() -> None:
     _ensure_required_tools()
     _setup_gcp_once()
-    _set_gcp_allowed_path_to_cwd()
+    _set_gcp_allowed_path()
     _ensure_globus_login()
     _ensure_hubmap_login()
     print("[setup] Setup complete. You can now call transfer().")
@@ -421,7 +449,6 @@ def transfer(
     manifest_path: Union[str, None] = None,
     protected: bool = False,
 ) -> None:
-    
     if destination is None:
         if isinstance(hubmap_id, str):
             destination = f"./{hubmap_id}"
@@ -433,14 +460,25 @@ def transfer(
             raise ValueError("destination could not be inferred. Provide hubmap_id or manifest_path.")
 
     destination = os.path.abspath(os.path.expanduser(destination))
+
+    gcp_home = _home()
+
+    if os.path.commonpath([gcp_home, destination]) != gcp_home:
+        raise ValueError(
+            f"[transfer] destination must be under your home directory ({gcp_home}).\n"
+            f"Got: {destination}"
+        )
+    
+    relative_destination = os.path.relpath(destination, gcp_home)
+
     os.makedirs(destination, exist_ok=True)
 
     _ensure_required_tools()
     _setup_gcp_once()
-    _set_gcp_allowed_path_to_cwd()
+    _set_gcp_allowed_path()
     _ensure_globus_login()
     _ensure_hubmap_login()
-    
+
     manifest = _resolve_manifest(
         hubmap_id=hubmap_id,
         manifest_path=manifest_path,
@@ -449,12 +487,14 @@ def transfer(
 
     _start_gcp()
 
-    cmd = ["hubmap-clt", "transfer", manifest, "--destination", destination]
+    cmd = ["hubmap-clt", "transfer", manifest, "-d", relative_destination]
 
     if protected:
         cmd.append("--from-protected-space")
 
     print(f"[gcp] Starting {'protected' if protected else 'public'} transfer...")
+    print(f"[gcp] Destination (absolute): {destination}")
+    print(f"[gcp] Destination (relative to home, passed to -d): {relative_destination}")
     print("[gcp] Command:", " ".join(cmd))
 
     error_indicators = [
@@ -472,7 +512,6 @@ def transfer(
         result = subprocess.run(cmd, capture_output=True, text=True)
         output = (result.stdout or "") + "\n" + (result.stderr or "")
         print(output)
-
 
         if "Session reauthentication required" in output:
             if attempt == 0:
