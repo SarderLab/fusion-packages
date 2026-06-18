@@ -1081,7 +1081,7 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         file_paths (list): List of local file paths to process (optional, fusion only).
         dir_path (str): Local directory path; all files in the directory will be uploaded and processed (optional, fusion only).
     """
-    print("Running from:Notebook")
+    print("Running from:", __file__)
     
     if backend == 'notebook':
         if gc is not None:

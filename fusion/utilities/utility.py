@@ -8,8 +8,69 @@ from pathlib import Path
 import shutil
 import mimetypes
 
+def _resolve_local_path(path, must_exist=False):
+    """
+    Resolve local user-entered paths safely.
+
+    Fixes cases like:
+        cwd   = /home/user/fusion_demo_notebooks
+        input = fusion_demo_notebooks/datasets/data_1
+        final = /home/user/fusion_demo_notebooks/datasets/data_1
+
+    Also handles:
+        blue/...   -> /blue/...
+        orange/... -> /orange/...
+        home/...   -> /home/...
+    """
+    if path is None:
+        return None
+
+    raw_path = str(path).strip().strip('"').strip("'")
+    raw_path = os.path.expanduser(raw_path)
+
+    if os.path.isabs(raw_path):
+        resolved = os.path.abspath(raw_path)
+        if must_exist and not os.path.exists(resolved):
+            raise FileNotFoundError(f"Path not found: {resolved}")
+        return resolved
+
+    cwd = os.getcwd()
+    normalized = raw_path.replace("\\", "/")
+    parts = [p for p in normalized.split("/") if p]
+
+    candidates = []
+
+    # Fix duplicated current-folder prefix.
+    # Example:
+    # cwd = /home/user/fusion_demo_notebooks
+    # raw = fusion_demo_notebooks/datasets/...
+    # candidate = /home/user/fusion_demo_notebooks/datasets/...
+    if parts:
+        cur = cwd
+        while cur and cur != os.path.dirname(cur):
+            if os.path.basename(cur) == parts[0]:
+                candidates.append(os.path.abspath(os.path.join(os.path.dirname(cur), raw_path)))
+            cur = os.path.dirname(cur)
+
+        # Handle missing leading slash for known HPC roots.
+        if parts[0] in {"home", "blue", "orange"}:
+            candidates.append(os.path.abspath(os.path.join(os.sep, raw_path)))
+
+    # Normal cwd-relative fallback.
+    candidates.append(os.path.abspath(os.path.join(cwd, raw_path)))
+
+    for candidate in dict.fromkeys(candidates):
+        if os.path.exists(candidate):
+            return candidate
+
+    if must_exist:
+        checked = "\n".join(f"  - {c}" for c in dict.fromkeys(candidates))
+        raise FileNotFoundError(f"Path not found: {raw_path}\nChecked:\n{checked}")
+
+    return candidates[0]
 
 def download_folder_zip_from_fusion_backend(gc, folder_id, output_dir="."):
+    output_dir = _resolve_local_path(output_dir, must_exist=False)
     os.makedirs(output_dir, exist_ok=True)
     
     # Get the folder info so we can name the zip file correctly
@@ -40,13 +101,15 @@ def download_folder_zip_from_fusion_backend(gc, folder_id, output_dir="."):
 
 
 def download_from_fusion_to_workspace(gc, resource_id, resource_type="file", output_dir="."):
+    output_dir = _resolve_local_path(output_dir, must_exist=False)
+    
     if resource_type == "file":
         info = gc.get(f"/file/{resource_id}")
         file_name = info["name"]
         
         # Use the file name as the folder name
         folder_name = os.path.splitext(file_name)[0]
-        folder_path = f"./datasets/{folder_name}/image"
+        folder_path = os.path.join(output_dir, "datasets", folder_name, "image")
         os.makedirs(folder_path, exist_ok=True)
         
         # Set the final output path inside the new folder
@@ -385,7 +448,7 @@ def optimize_workspace_wsi(source, delete_originals=False):
     Returns:
         dict: Optimization results and statistics.
     """
-    source_path = Path(source)
+    source_path = Path(_resolve_local_path(source, must_exist=False))
     
     results = {
         "source": source,
@@ -426,7 +489,7 @@ def optimize_workspace_wsi(source, delete_originals=False):
             
     else:
         # Assume it's a hubmap_id
-        base_path = Path.cwd() / "datasets" / source
+        base_path = Path(_resolve_local_path(Path("datasets") / str(source), must_exist=False))
         
         if not base_path.exists():
             print(f"Error: Directory 'datasets/{source}' does not exist and '{source}' is not a valid file/folder path.")
@@ -780,7 +843,18 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
     tif_item_id = None
     if hubmap_id:
         temp_download = True
+        if file_path:
+            file_path = _resolve_local_path(file_path, must_exist=True)
     
+        if file_paths:
+            file_paths = [
+                _resolve_local_path(path, must_exist=True)
+                for path in file_paths
+            ]
+    
+        if dir_path:
+            dir_path = _resolve_local_path(dir_path, must_exist=True)
+        
     temp_folder = None
     should_upload = True
     
@@ -1253,6 +1327,7 @@ def download_reference_files_from_fusion(gc):
         ]
     }
     for output_dir, file_ids in assets.items():
+        output_dir = _resolve_local_path(output_dir, must_exist=False)
         print(f"\nDownloading {output_dir} to {output_dir}/")
         os.makedirs(output_dir, exist_ok=True)
         for file_id in file_ids:
@@ -1270,6 +1345,7 @@ def download_model_files_from_fusion(gc):
         ]
     }
     for output_dir, file_ids in assets.items():
+        output_dir = _resolve_local_path(output_dir, must_exist=False)
         print(f"\nDownloading {output_dir} to {output_dir}/")
         os.makedirs(output_dir, exist_ok=True)
         for file_id in file_ids:
@@ -1280,6 +1356,7 @@ def download_model_files_from_fusion(gc):
         print(f"  Done.")
 
 def download_file_from_fusion(gc, file_id, output_dir):
+    output_dir = _resolve_local_path(output_dir, must_exist=False)
     os.makedirs(output_dir, exist_ok=True)
     file_info = gc.get(f"/file/{file_id}")
     out_path = os.path.join(output_dir, file_info["name"])
