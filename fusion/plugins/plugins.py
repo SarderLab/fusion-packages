@@ -9,6 +9,7 @@ import time
 import anndata
 import shlex
 import pandas as pd
+import socket
 
 # Session store for submitted Slurm jobs
 _SLURM_JOBS = {}   # job_id -> {'name': str, 'log': str, 'start': float}
@@ -41,6 +42,11 @@ def _print_new_log_lines(log_path, last_pos):
         return new_pos
     except Exception:
         return last_pos
+    
+def _is_hipergator():
+    """Check if running on HiPerGator."""
+    hostname = socket.gethostname()
+    return "ufhpc" in hostname
 
 def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
     """Stream live log output. Blocks until job finishes or Ctrl+C."""
@@ -251,8 +257,10 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
 def _get_jupyter_slurm_resources(analysis_type=None):
     """Return fixed Slurm resource limits for analysis jobs."""
     if analysis_type=='label_transfer':
-        return "03:00:00", "64GB", 4
-    return "03:00:00", "16gb", 2
+        return "03:00:00", "64GB", 4, 0, None
+    if analysis_type in ('frozen_glom_segmentation', 'multicompartment_segmentation'):
+        return "03:00:00", "16gb", 2, 1, 'hpg-turin'
+    return "03:00:00", "16gb", 2, 0, None
 
 def get_hive_workspace_root():
     """
@@ -596,7 +604,7 @@ def run_apptainer_analysis():
     job_name = analysis_type
 
     # Match resources to the current JupyterHub Slurm session
-    time_limit, mem_limit, cpus = _get_jupyter_slurm_resources(analysis_type)
+    time_limit, mem_limit, cpus, gpus, partition = _get_jupyter_slurm_resources(analysis_type)
 
     path_params = config.get('path_params', set())
     bind_roots = set()
@@ -612,8 +620,15 @@ def run_apptainer_analysis():
         for root in sorted(bind_roots)
     )
     
+    if analysis_type in (
+    "frozen_glom_segmentation",
+    "multicompartment_segmentation"):
+        NV='--nv'
+    else: 
+        NV=""
+    
     apptainer_cmd_parts = [
-        f"apptainer exec {bind_args}",
+        f"apptainer exec {NV} {bind_args}",
         f"docker://{config['image']}",
         f"python {config['script']}"
     ]
@@ -695,6 +710,10 @@ find {abs_output_dir} -mindepth 2 -type f | while IFS= read -r filepath; do
 done
 find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 
+    gpu_lines = ""
+    if gpus > 0 and partition and _is_hipergator():
+        gpu_lines = f"#SBATCH --partition={partition}\n#SBATCH --gpus={gpus}"
+    
     # create a submission script content
     slurm_script_content = f"""#!/bin/bash
 #SBATCH --job-name={job_name}
@@ -703,6 +722,7 @@ find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 #SBATCH --mem={mem_limit}
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task={cpus}
+{gpu_lines}
 
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
