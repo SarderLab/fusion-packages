@@ -881,12 +881,24 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
     
     # If user chose to use existing folder without uploading, return early
     if not should_upload:
+        existing_tif_item_id = None
+
+        if is_analysis_result:
+            items = gc.get('/item', parameters={'folderId': folder_id})
+    
+            for item in items:
+                item_details = gc.get(f'/item/{item["_id"]}')
+                if 'largeImage' in item_details:
+                    existing_tif_item_id = item['_id']
+                    break
+                
         return {
-        "folder_id": folder_id,
-        "uploaded_files": [],
-        "failed_files": [],
-        "total_uploaded": 0,
-        "total_failed": 0
+            "folder_id": folder_id,
+            "uploaded_files": [],
+            "failed_files": [],
+            "total_uploaded": 0,
+            "total_failed": 0,
+            "tif_item_id": existing_tif_item_id
         }
     
     # 1: Upload from HubMAP ID
