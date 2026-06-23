@@ -605,7 +605,31 @@ def run_apptainer_analysis():
 
     # Match resources to the current JupyterHub Slurm session
     time_limit, mem_limit, cpus, gpus, partition = _get_jupyter_slurm_resources(analysis_type)
+    
+    print("\nApptainer Cache Directory:")
+    print("-" * 40)
+    print("  [1] Default (home directory)")
+    print("  [2] Custom path")
+    
+    cache_choice = input("Enter choice (1/2): ").strip()
 
+    cache_lines = ""
+    if cache_choice == '2':
+        while True:
+            cache_path = input("Enter cache directory path (e.g. /orange/pinaki.sarder/ashmit.sharma/.apptainer/cache): ").strip()
+            if cache_path:
+                try:
+                    os.makedirs(cache_path, exist_ok=True)
+                    tmp_path = os.path.join(cache_path, 'tmp')
+                    os.makedirs(tmp_path, exist_ok=True)
+                    cache_lines = f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\nexport APPTAINER_TMPDIR={_quote_path(tmp_path)}"
+                    print(f"Cache will be stored at: {cache_path}")
+                    break
+                except Exception as e:
+                    print(f"Could not create directory: {e}\nPlease enter a valid path.")
+            else:
+                print("Path cannot be empty.")
+    
     path_params = config.get('path_params', set())
     bind_roots = set()
     
@@ -723,6 +747,7 @@ find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task={cpus}
 {gpu_lines}
+{cache_lines}
 
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
