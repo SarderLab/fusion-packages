@@ -616,7 +616,7 @@ def run_apptainer_analysis():
     cache_lines = ""
     if cache_choice == '2':
         while True:
-            cache_path = input("Enter cache directory path (e.g. /orange/pinaki.sarder/ashmit.sharma/.apptainer/cache): ").strip()
+            cache_path = input("Enter cache directory path: ").strip()
             if cache_path:
                 try:
                     os.makedirs(cache_path, exist_ok=True)
