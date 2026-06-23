@@ -843,16 +843,16 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
     tif_item_id = None
     if hubmap_id:
         temp_download = True
-        if file_path:
+    if file_path:
             file_path = _resolve_local_path(file_path, must_exist=True)
     
-        if file_paths:
+    if file_paths:
             file_paths = [
                 _resolve_local_path(path, must_exist=True)
                 for path in file_paths
             ]
     
-        if dir_path:
+    if dir_path:
             dir_path = _resolve_local_path(dir_path, must_exist=True)
         
     temp_folder = None
