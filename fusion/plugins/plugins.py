@@ -10,6 +10,7 @@ import anndata
 import shlex
 import pandas as pd
 import socket
+import json
 
 # Session store for submitted Slurm jobs
 _SLURM_JOBS = {}   # job_id -> {'name': str, 'log': str, 'start': float}
@@ -385,6 +386,81 @@ def sanitize_h5ad_obsm(h5ad_path):
     #print(f"  Overwrote: {h5ad_path}")
     return True
 
+CONFIG_PATH = os.path.expanduser("~/.fusion_config.json")
+
+def _get_apptainer_cache_lines():
+    """Resolve the Apptainer cache directory and return shell export lines."""
+    config = {}
+
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                config = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            config = {}
+
+    saved_path = config.get("apptainer_cache")
+
+    print("\nApptainer Cache Directory:")
+    print("-" * 40)
+    print("  [1] Default (home directory)")
+    print("  [2] Custom path")
+    if saved_path:
+        print(f"  [3] Saved path: {saved_path}")
+
+    valid_choices = {"1", "2"}
+    if saved_path:
+        valid_choices.add("3")
+
+    while True:
+        options = "/".join(sorted(valid_choices))
+        choice = input(f"Enter choice ({options}): ").strip()
+        if choice in valid_choices:
+            break
+        print("Please enter a valid choice.")
+
+    if choice == "1":
+        return ""
+
+    if choice == "3":
+        cache_path = saved_path
+    else:
+        while True:
+            entered_path = input("Enter cache directory path: ").strip()
+            if not entered_path:
+                print("Path cannot be empty.")
+                continue
+
+            cache_path = os.path.abspath(os.path.expanduser(entered_path))
+
+            try:
+                os.makedirs(cache_path, exist_ok=True)
+                break
+            except OSError as e:
+                print(f"Could not create directory: {e}")
+
+        config["apptainer_cache"] = cache_path
+        try:
+            with open(CONFIG_PATH, "w") as f:
+                json.dump(config, f, indent=2)
+            print("Cache path saved for future runs.")
+        except OSError as e:
+            print(f"Warning: Could not save cache path: {e}")
+
+    try:
+        os.makedirs(cache_path, exist_ok=True)
+        tmp_path = os.path.join(cache_path, "tmp")
+        os.makedirs(tmp_path, exist_ok=True)
+    except OSError as e:
+        raise RuntimeError(f"Could not prepare Apptainer cache directory: {e}") from e
+
+    print(f"Cache will be stored at: {cache_path}")
+
+    return (
+        f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
+        f"export APPTAINER_TMPDIR={_quote_path(tmp_path)}"
+    )
+            
 def run_apptainer_analysis():
     """
     Interactive function to generate and submit analysis tasks using Apptainer containers via Slurm.
@@ -606,30 +682,7 @@ def run_apptainer_analysis():
     # Match resources to the current JupyterHub Slurm session
     time_limit, mem_limit, cpus, gpus, partition = _get_jupyter_slurm_resources(analysis_type)
     
-    print("\nApptainer Cache Directory:")
-    print("-" * 40)
-    print("  [1] Default (home directory)")
-    print("  [2] Custom path")
-    
-    cache_choice = input("Enter choice (1/2): ").strip()
-
-    cache_lines = ""
-    if cache_choice == '2':
-        while True:
-            cache_path = input("Enter cache directory path: ").strip()
-            if cache_path:
-                try:
-                    os.makedirs(cache_path, exist_ok=True)
-                    tmp_path = os.path.join(cache_path, 'tmp')
-                    os.makedirs(tmp_path, exist_ok=True)
-                    cache_lines = f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\nexport APPTAINER_TMPDIR={_quote_path(tmp_path)}"
-                    print(f"Cache will be stored at: {cache_path}")
-                    break
-                except Exception as e:
-                    print(f"Could not create directory: {e}\nPlease enter a valid path.")
-            else:
-                print("Path cannot be empty.")
-    
+    cache_lines = _get_apptainer_cache_lines()
     path_params = config.get('path_params', set())
     bind_roots = set()
     
