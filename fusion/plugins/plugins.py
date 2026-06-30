@@ -389,7 +389,7 @@ def sanitize_h5ad_obsm(h5ad_path):
 CONFIG_PATH = os.path.expanduser("~/.fusion_config.json")
 
 def _get_apptainer_cache_lines():
-    """Resolve the Apptainer cache directory and return shell export lines."""
+    """Resolve storage used for container files."""
     config = {}
 
     if os.path.exists(CONFIG_PATH):
@@ -399,18 +399,35 @@ def _get_apptainer_cache_lines():
         except (OSError, json.JSONDecodeError):
             config = {}
 
+    # HuBMAP Workspace: use the current working directory automatically.
+    if not _is_hipergator():
+        cache_path = os.path.join(os.getcwd(), ".container_storage")
+        tmp_path = os.path.join(cache_path, "tmp")
+
+        try:
+            os.makedirs(tmp_path, exist_ok=True)
+        except OSError as e:
+            raise RuntimeError(
+                f"Could not prepare temporary storage: {e}"
+            ) from e
+
+        print(f"\nTemporary files will be stored in: {cache_path}")
+
+        return (
+            f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
+            f"export APPTAINER_TMPDIR={_quote_path(tmp_path)}"
+        )
+
+    # HiPerGator: keep the existing storage choices.
     saved_path = config.get("apptainer_cache")
 
-    print("\nApptainer Cache Directory:")
+    print("\nTemporary Storage:")
     print("-" * 40)
-    if _is_hipergator():
-        print("  [1] Default (home directory)")
-        print("  [2] Custom path (RECOMMENDED: Path in /blue directory)")
-    else:
-        print("  [1] Default (home directory, RECOMMENDED)")
-        print("  [2] Custom path")
+    print("  [1] Use Standard Location")
+    print("  [2] Choose Another Location (RECOMMENDED) (path in /blue)")
+
     if saved_path:
-        print(f"  [3] Saved path: {saved_path}")
+        print(f"  [3] Use Saved Location: {saved_path}")
 
     valid_choices = {"1", "2"}
     if saved_path:
@@ -419,8 +436,10 @@ def _get_apptainer_cache_lines():
     while True:
         options = "/".join(sorted(valid_choices))
         choice = input(f"Enter choice ({options}): ").strip()
+
         if choice in valid_choices:
             break
+
         print("Please enter a valid choice.")
 
     if choice == "1":
@@ -430,35 +449,44 @@ def _get_apptainer_cache_lines():
         cache_path = saved_path
     else:
         while True:
-            entered_path = input("Enter cache directory path: ").strip()
+            entered_path = input("Enter storage location: ").strip()
+
             if not entered_path:
-                print("Path cannot be empty.")
+                print("Location cannot be empty.")
                 continue
 
-            cache_path = os.path.abspath(os.path.expanduser(entered_path))
+            cache_path = os.path.abspath(
+                os.path.expanduser(entered_path)
+            )
 
             try:
                 os.makedirs(cache_path, exist_ok=True)
                 break
             except OSError as e:
-                print(f"Could not create directory: {e}")
+                print(f"Could not create this location: {e}")
 
         config["apptainer_cache"] = cache_path
+
         try:
             with open(CONFIG_PATH, "w") as f:
                 json.dump(config, f, indent=2)
-            print("Cache path saved for future runs.")
+
+            print("Location saved for future runs.")
         except OSError as e:
-            print(f"Warning: Could not save cache path: {e}")
+            print(f"Warning: Could not save location: {e}")
 
     try:
         os.makedirs(cache_path, exist_ok=True)
+
         tmp_path = os.path.join(cache_path, "tmp")
         os.makedirs(tmp_path, exist_ok=True)
-    except OSError as e:
-        raise RuntimeError(f"Could not prepare Apptainer cache directory: {e}") from e
 
-    print(f"Cache will be stored at: {cache_path}")
+    except OSError as e:
+        raise RuntimeError(
+            f"Could not prepare container storage: {e}"
+        ) from e
+
+    print(f"Temporary files will be stored in: {cache_path}")
 
     return (
         f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
