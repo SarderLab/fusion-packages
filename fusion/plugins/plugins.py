@@ -403,8 +403,12 @@ def _get_apptainer_cache_lines():
 
     print("\nApptainer Cache Directory:")
     print("-" * 40)
-    print("  [1] Default (home directory)")
-    print("  [2] Custom path")
+    if _is_hipergator():
+        print("  [1] Default (home directory)")
+        print("  [2] Custom path (RECOMMENDED: Path in /blue directory)")
+    else:
+        print("  [1] Default (home directory, RECOMMENDED)")
+        print("  [2] Custom path")
     if saved_path:
         print(f"  [3] Saved path: {saved_path}")
 

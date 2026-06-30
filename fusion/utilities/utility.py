@@ -710,7 +710,7 @@ def create_or_get_folder_from_fusion_backend(gc, user_name, hubmap_id=None, file
             })
             folder_id = folder['_id']
             print(f"Folder created successfully!")
-            print(f"  Name: {target_folder_name}")
+            print(f"  Name: {new_folder_name}")
             print(f"  ID: {folder_id}")
             
         elif choice == '4':

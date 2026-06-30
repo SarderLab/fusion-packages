@@ -175,6 +175,8 @@ def _setup_gcp_once() -> None:
 
 def _set_gcp_allowed_path() -> None:
     home = _home()
+    allowed_root = _download_root()
+
     config_dir = os.path.join(home, ".globusonline", "lta")
     config_path = os.path.join(config_dir, "config-paths")
 
@@ -185,9 +187,9 @@ def _set_gcp_allowed_path() -> None:
         )
 
     with open(config_path, "w") as f:
-        f.write(f"{home},0,1\n")
+        f.write(f"{allowed_root},0,1\n")
 
-    print(f"[gcp-setup] GCP allowed path set to: {home}")
+    print(f"[gcp-setup] GCP allowed path set to: {allowed_root}")
 
 
 def _start_gcp(wait_seconds: int = 120) -> None:
@@ -333,6 +335,25 @@ def _ensure_hubmap_login() -> None:
     _run(["hubmap-clt", "login"])
     print("[hubmap] HuBMAP login step complete.\n")
 
+def _download_root() -> str:
+    """
+    Return the root that GCP should treat as directly accessible.
+
+    In HuBMAP Workspace, the working storage root is:
+    /hive/user-workspaces/<username>/<workspace_id>
+
+    On HiPerGator and other systems, use the normal home directory.
+    """
+    cwd = os.path.abspath(os.getcwd())
+    parts = cwd.split(os.sep)
+
+    if cwd.startswith("/hive/") and "user-workspaces" in parts:
+        index = parts.index("user-workspaces")
+
+        if len(parts) > index + 2:
+            return os.sep.join(parts[:index + 3])
+
+    return _home()
 
 def _handle_session_reauth(output: str) -> None:
     match = re.search(r"globus session update (\S+)", output)
@@ -418,70 +439,85 @@ def _append_to_cwd(destination: str) -> str:
     return _collapse_adjacent_duplicates(joined)
 
 
-def _ask_destination(destination: str) -> tuple:
-    while True:
-        print("\n[transfer] How should destination be interpreted?")
-        print("[transfer] 1 = Use destination as absolute/full path")
-        print("[transfer] 2 = Append destination to current working directory")
-        print(f"[transfer] destination entered: {destination}")
-        print(f"[transfer] current working directory: {os.getcwd()}")
+def _resolve_destination(destination: str) -> tuple:
+    """
+    Resolve the destination automatically.
 
-        choice = input("[transfer] Choose 1 or 2: ").strip()
+    - Relative paths are appended to the current working directory.
+    - Absolute paths inside the current working directory are used directly.
+    - Other absolute paths are treated as full paths.
+    """
+    destination = str(destination).strip().strip('"').strip("'")
+    destination = os.path.expanduser(destination)
 
-        if choice == "1":
-            if not os.path.isabs(os.path.expanduser(destination)):
-                print("[transfer] You selected absolute/full path, but destination is not absolute.")
-                destination = input("[transfer] Enter corrected absolute/full destination path: ").strip()
-                continue
+    cwd = os.path.abspath(os.getcwd())
 
-            resolved = _collapse_adjacent_duplicates(destination)
+    if not os.path.isabs(destination):
+        resolved = _append_to_cwd(destination)
+        mode = "cwd"
+    else:
+        resolved = _collapse_adjacent_duplicates(destination)
 
-            if _can_write(resolved):
-                print(f"[transfer] Using absolute/full destination: {resolved}")
-                return resolved, "absolute"
+        try:
+            inside_cwd = os.path.commonpath([cwd, resolved]) == cwd
+        except ValueError:
+            inside_cwd = False
 
-            destination = input("[transfer] Enter corrected absolute/full destination path: ").strip()
-            continue
+        mode = "cwd" if inside_cwd else "absolute"
 
-        if choice == "2":
-            resolved = _append_to_cwd(destination)
+    if not _can_write(resolved):
+        raise ValueError(
+            f"[transfer] Destination is not writable: {resolved}"
+        )
 
-            if _can_write(resolved):
-                print(f"[transfer] Using cwd-appended destination: {resolved}")
-                return resolved, "cwd"
-
-            destination = input("[transfer] Enter corrected destination path: ").strip()
-            continue
-
-        print("[transfer] Invalid choice. Please enter 1 or 2.")
+    print(f"[transfer] Final destination: {resolved}")
+    return resolved, mode
 
 
 def _resolve_download_plan(final_destination: str, mode: str) -> tuple:
+    """
+    Determine whether the transfer can download directly or must use
+    a temporary location under the real home directory.
+    """
     home = _home()
+    download_root = _download_root()
 
-    if mode == "cwd":
-        if os.path.commonpath([home, final_destination]) != home:
-            raise ValueError(
-                "[transfer] CWD-appended destination resolved outside home.\n"
-                f"[transfer] Home:        {home}\n"
-                f"[transfer] Destination: {final_destination}"
-            )
+    final_destination = os.path.abspath(
+        os.path.expanduser(final_destination)
+    )
 
-        return final_destination, os.path.relpath(final_destination, home), False
+    try:
+        inside_download_root = (
+            os.path.commonpath([download_root, final_destination])
+            == download_root
+        )
+    except ValueError:
+        inside_download_root = False
 
-    if mode == "absolute":
-        if os.path.commonpath([home, final_destination]) == home:
-            return final_destination, os.path.relpath(final_destination, home), False
+    # HuBMAP Workspace paths and normal home paths can be downloaded directly.
+    if inside_download_root:
+        return (
+            final_destination,
+            os.path.relpath(final_destination, download_root),
+            False,
+        )
 
-        name = os.path.basename(os.path.abspath(final_destination))
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        temp = os.path.join(home, "hubmap_temp_transfer", f"{name}_{timestamp}")
+    # External paths such as /blue or /orange use the temporary-copy workaround.
+    name = os.path.basename(final_destination)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    temp = os.path.join(
+        home,
+        "hubmap_temp_transfer",
+        f"{name}_{timestamp}",
+    )
 
-        os.makedirs(temp, exist_ok=True)
+    os.makedirs(temp, exist_ok=True)
 
-        return temp, os.path.relpath(temp, home), True
-
-    raise ValueError(f"Unknown destination mode: {mode}")
+    return (
+        temp,
+        os.path.relpath(temp, home),
+        True,
+    )
 
 
 def _build_manifest(hubmap_ids: list, manifest_dir: str) -> str:
@@ -559,7 +595,7 @@ def _copy_contents(source_dir: str, destination_dir: str) -> None:
 
     os.makedirs(destination_dir, exist_ok=True)
 
-    print(f"[transfer] Copying downloaded data to: {destination_dir}")
+    #print(f"[transfer] Copying downloaded data to: {destination_dir}")
 
     for item in os.listdir(source_dir):
         src = os.path.join(source_dir, item)
@@ -570,7 +606,7 @@ def _copy_contents(source_dir: str, destination_dir: str) -> None:
         else:
             shutil.copy2(src, dst)
 
-    print("[transfer] Copy complete.")
+    #print("[transfer] Copy complete.")
 
 
 def _clean_temp_download(download_destination: str) -> None:
@@ -613,7 +649,7 @@ def transfer(
         else:
             raise ValueError("destination could not be inferred. Provide hubmap_id or manifest_path.")
 
-    final_destination, mode = _ask_destination(destination)
+    final_destination, mode = _resolve_destination(destination)
 
     download_destination, destination_for_hubmap, copy_after_download = _resolve_download_plan(
         final_destination,
@@ -694,7 +730,7 @@ def transfer(
             _copy_contents(download_destination, final_destination)
             _clean_temp_download(download_destination)
 
-            print("[gcp] Transfer and copy complete.")
+            print("[gcp] Transfer complete.")
             print(f"[gcp] Final data location: {final_destination}")
         else:
             print(f"[gcp] Transfer initiated. Data should be in: {final_destination}")
