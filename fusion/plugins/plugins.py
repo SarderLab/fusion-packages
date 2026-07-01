@@ -424,10 +424,12 @@ def _get_apptainer_cache_lines():
     print("\nTemporary Storage:")
     print("-" * 40)
     print("  [1] Use Standard Location")
-    print("  [2] Choose Another Location (RECOMMENDED) (path in /blue)")
 
     if saved_path:
-        print(f"  [3] Use Saved Location: {saved_path}")
+        print("  [2] Choose Another Location (path in /blue)")
+        print(f"  [3] Use Saved Location (RECOMMENDED) : {saved_path}")
+    else:
+        print("  [2] Choose Another Location (RECOMMENDED) (path in /blue)")
 
     valid_choices = {"1", "2"}
     if saved_path:
