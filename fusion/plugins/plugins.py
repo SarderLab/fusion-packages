@@ -7,7 +7,10 @@ import re
 import shutil
 import time
 import anndata
+import shlex
 import pandas as pd
+import socket
+import json
 
 # Session store for submitted Slurm jobs
 _SLURM_JOBS = {}   # job_id -> {'name': str, 'log': str, 'start': float}
@@ -40,6 +43,11 @@ def _print_new_log_lines(log_path, last_pos):
         return new_pos
     except Exception:
         return last_pos
+    
+def _is_hipergator():
+    """Check if running on HiPerGator."""
+    hostname = socket.gethostname()
+    return "ufhpc" in hostname
 
 def _stream_slurm_log(job_id, job_name, log_path, poll_interval=10):
     """Stream live log output. Blocks until job finishes or Ctrl+C."""
@@ -250,8 +258,10 @@ def _track_slurm_job(job_id, job_name, log_filename, poll_interval=10):
 def _get_jupyter_slurm_resources(analysis_type=None):
     """Return fixed Slurm resource limits for analysis jobs."""
     if analysis_type=='label_transfer':
-        return "03:00:00", "64GB", 4
-    return "03:00:00", "16gb", 2
+        return "03:00:00", "64GB", 4, 0, None
+    if analysis_type in ('frozen_glom_segmentation', 'multicompartment_segmentation'):
+        return "03:00:00", "16gb", 2, 1, 'hpg-turin'
+    return "03:00:00", "16gb", 2, 0, None
 
 def get_hive_workspace_root():
     """
@@ -281,6 +291,66 @@ def get_hive_workspace_root():
     # Fallback if structure isn't found
     print(f"Warning: 'user-workspaces' structure not found in {current_path}.")
     return current_path
+
+def _resolve_user_path(path, must_exist=True):
+    """
+    Resolve a user-entered path to a real absolute path.
+
+    Fixes:
+    cwd   = /home/user/fusion_demo_notebooks
+    input = fusion_demo_notebooks/datasets/data_1
+    final = /home/user/fusion_demo_notebooks/datasets/data_1
+
+    Also keeps /blue, /orange, and /home paths real.
+    """
+    raw_path = str(path).strip().strip('"').strip("'")
+    raw_path = os.path.expanduser(raw_path)
+
+    if os.path.isabs(raw_path):
+        resolved = os.path.abspath(raw_path)
+        if must_exist and not os.path.exists(resolved):
+            raise FileNotFoundError(f"Path not found: {resolved}")
+        return resolved
+
+    cwd = os.getcwd()
+    normalized = raw_path.replace("\\", "/")
+    parts = [p for p in normalized.split("/") if p]
+
+    candidates = []
+
+    if parts:
+        cur = cwd
+        while cur and cur != os.path.dirname(cur):
+            if os.path.basename(cur) == parts[0]:
+                candidates.append(os.path.abspath(os.path.join(os.path.dirname(cur), raw_path)))
+            cur = os.path.dirname(cur)
+    
+        if parts[0] in {"home", "blue", "orange"}:
+            candidates.append(os.path.abspath(os.path.join(os.sep, raw_path)))
+    
+    candidates.append(os.path.abspath(os.path.join(cwd, raw_path)))
+
+    for candidate in dict.fromkeys(candidates):
+        if os.path.exists(candidate):
+            return candidate
+
+    if must_exist:
+        checked = "\n".join(f"  - {c}" for c in dict.fromkeys(candidates))
+        raise FileNotFoundError(f"Path not found: {raw_path}\nChecked:\n{checked}")
+
+    return candidates[0]
+
+
+def _get_bind_root(path):
+    abs_path = os.path.abspath(path)
+    parts = abs_path.strip(os.sep).split(os.sep)
+    if not parts or not parts[0]:
+        return os.sep
+    return os.path.join(os.sep, parts[0])
+
+
+def _quote_path(path):
+    return shlex.quote(str(path))
 
 def sanitize_h5ad_obsm(h5ad_path):
     
@@ -316,6 +386,115 @@ def sanitize_h5ad_obsm(h5ad_path):
     #print(f"  Overwrote: {h5ad_path}")
     return True
 
+CONFIG_PATH = os.path.expanduser("~/.fusion_config.json")
+
+def _get_apptainer_cache_lines():
+    """Resolve storage used for container files."""
+    config = {}
+
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                config = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            config = {}
+
+    # HuBMAP Workspace: use the current working directory automatically.
+    if not _is_hipergator():
+        cache_path = os.path.join(os.getcwd(), ".container_storage")
+        tmp_path = os.path.join(cache_path, "tmp")
+
+        try:
+            os.makedirs(tmp_path, exist_ok=True)
+        except OSError as e:
+            raise RuntimeError(
+                f"Could not prepare temporary storage: {e}"
+            ) from e
+
+        print(f"\nTemporary files will be stored in: {cache_path}")
+
+        return (
+            f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
+            f"export APPTAINER_TMPDIR={_quote_path(tmp_path)}"
+        )
+
+    # HiPerGator: keep the existing storage choices.
+    saved_path = config.get("apptainer_cache")
+
+    print("\nTemporary Storage:")
+    print("-" * 40)
+    print("  [1] Use Standard Location")
+
+    if saved_path:
+        print("  [2] Choose Another Location (path in /blue)")
+        print(f"  [3] Use Saved Location (RECOMMENDED) : {saved_path}")
+    else:
+        print("  [2] Choose Another Location (RECOMMENDED) (path in /blue)")
+
+    valid_choices = {"1", "2"}
+    if saved_path:
+        valid_choices.add("3")
+
+    while True:
+        options = "/".join(sorted(valid_choices))
+        choice = input(f"Enter choice ({options}): ").strip()
+
+        if choice in valid_choices:
+            break
+
+        print("Please enter a valid choice.")
+
+    if choice == "1":
+        return ""
+
+    if choice == "3":
+        cache_path = saved_path
+    else:
+        while True:
+            entered_path = input("Enter storage location: ").strip()
+
+            if not entered_path:
+                print("Location cannot be empty.")
+                continue
+
+            cache_path = os.path.abspath(
+                os.path.expanduser(entered_path)
+            )
+
+            try:
+                os.makedirs(cache_path, exist_ok=True)
+                break
+            except OSError as e:
+                print(f"Could not create this location: {e}")
+
+        config["apptainer_cache"] = cache_path
+
+        try:
+            with open(CONFIG_PATH, "w") as f:
+                json.dump(config, f, indent=2)
+
+            print("Location saved for future runs.")
+        except OSError as e:
+            print(f"Warning: Could not save location: {e}")
+
+    try:
+        os.makedirs(cache_path, exist_ok=True)
+
+        tmp_path = os.path.join(cache_path, "tmp")
+        os.makedirs(tmp_path, exist_ok=True)
+
+    except OSError as e:
+        raise RuntimeError(
+            f"Could not prepare container storage: {e}"
+        ) from e
+
+    print(f"Temporary files will be stored in: {cache_path}")
+
+    return (
+        f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
+        f"export APPTAINER_TMPDIR={_quote_path(tmp_path)}"
+    )
+            
 def run_apptainer_analysis():
     """
     Interactive function to generate and submit analysis tasks using Apptainer containers via Slurm.
@@ -424,15 +603,18 @@ def run_apptainer_analysis():
             while True:
                 value = input(f"Enter {param} path: ").strip()
                 if value:
-                    user_params[param] = value
-                    break
+                    try:
+                        user_params[param] = _resolve_user_path(value, must_exist=True)
+                        break
+                    except FileNotFoundError as e:
+                        print(f"\nError: {e}\n")
                 else:
                     print(f"{param} is required. Please enter a value.")
     else:
         print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
     
     if analysis_type == "label_transfer" and "counts_file" in user_params:
-        h5ad_abs = os.path.join(workspace_path, user_params["counts_file"].lstrip(os.sep))
+        h5ad_abs = user_params["counts_file"]
         #print("\nChecking h5ad file for non-numeric 'DeepScence' obsm columns...")
         #print("─" * 55)
         try:
@@ -446,14 +628,12 @@ def run_apptainer_analysis():
     # Going up input_depth levels reaches the dataset root folder.
     primary = config.get('primary_input')
     if primary and primary in user_params:
-        rel_input = user_params[primary].lstrip(os.sep).lstrip('.')
+        input_abs = user_params[primary]
         input_depth = config.get('input_depth', 2)
-
-        # Validate that the path has enough components for the configured depth.
-        # e.g. depth=2 requires at least "a/b/file" (2 separators).
-        path_parts = [p for p in rel_input.replace('\\', '/').split('/') if p]
+        
+        path_parts = [p for p in input_abs.replace('\\', '/').split('/') if p]
         if len(path_parts) <= input_depth:
-            print(f"\nWarning: '{rel_input}' is too shallow for this analysis.")
+            print(f"\nWarning: '{input_abs}' is too shallow for this analysis.")
             print(f"  Expected a path at least {input_depth + 1} levels deep, e.g.:")
             if input_depth == 2:
                 print(f"  fusion_demo_notebooks/datasets/HBM355.CWFF.355/ometiff-pyramids/file.tif")
@@ -461,16 +641,18 @@ def run_apptainer_analysis():
                 print(f"  fusion_demo_notebooks/datasets/HBM355.CWFF.355/expr.h5ad")
             print("Please re-run and enter the correct path.\n")
             return None
-
-        dataset_root = rel_input
+        
+        dataset_root = input_abs
         for _ in range(input_depth):
             dataset_root = os.path.dirname(dataset_root)
-        user_params['output_dir'] = f"{dataset_root}/{config['output_subdir']}"
+        
+        user_params['output_dir'] = os.path.join(dataset_root, config['output_subdir'])
+        
         if 'annotations_subdir' in config:
-            user_params['annotations_dir'] = f"{dataset_root}/{config['annotations_subdir']}"
+            user_params['annotations_dir'] = os.path.join(dataset_root, config['annotations_subdir'])
         if analysis_type == "spot_annotation":
             import glob as _glob
-            files_dir = os.path.join(workspace_path, dataset_root, "Files")
+            files_dir = os.path.join(dataset_root, "Files")
             matches = _glob.glob(os.path.join(files_dir, "*_integrated.rds"))
             if len(matches) == 0:
                 print(f"\nError: No *_integrated.rds file found in {files_dir}")
@@ -482,12 +664,12 @@ def run_apptainer_analysis():
                     print(f"  {m}")
                 print("Please ensure only one integrated RDS exists.\n")
                 return None
-            rds_rel = os.path.relpath(matches[0], workspace_path)
-            user_params['input_file'] = rds_rel
-            print(f"Found integrated RDS: {rds_rel}")
+            rds_path = matches[0]
+            user_params['input_file'] = rds_path
+            print(f"Found integrated RDS: {rds_path}")
 
         if analysis_type == "spatial_aggregation":
-            segmented_ftu_dir = os.path.join(workspace_path, dataset_root, "Segmented_FTU")
+            segmented_ftu_dir = os.path.join(dataset_root, "Segmented_FTU")
             supported_exts = {'.json', '.geojson', '.xml', '.csv', '.parquet'}
             if os.path.isdir(segmented_ftu_dir):
                 ann_files = sorted([
@@ -515,8 +697,8 @@ def run_apptainer_analysis():
                     valid = True
                     for idx in indices:
                         if 1 <= idx <= len(ann_files):
-                            rel_path = os.path.join(dataset_root, "Segmented_FTU", ann_files[idx - 1])
-                            selected_paths.append(rel_path)
+                            ann_path = os.path.join(dataset_root, "Segmented_FTU", ann_files[idx - 1])
+                            selected_paths.append(ann_path)
                         else:
                             print(f"  {idx} is out of range (1-{len(ann_files)}). Please try again.")
                             valid = False
@@ -532,39 +714,57 @@ def run_apptainer_analysis():
     job_name = analysis_type
 
     # Match resources to the current JupyterHub Slurm session
-    time_limit, mem_limit, cpus = _get_jupyter_slurm_resources(analysis_type)
-
+    time_limit, mem_limit, cpus, gpus, partition = _get_jupyter_slurm_resources(analysis_type)
+    
+    cache_lines = _get_apptainer_cache_lines()
+    path_params = config.get('path_params', set())
+    bind_roots = set()
+    
+    for param_name, param_value in user_params.items():
+        if param_name in path_params and param_value is not None:
+            values = param_value if isinstance(param_value, list) else [param_value]
+            for value in values:
+                bind_roots.add(_get_bind_root(value))
+    
+    bind_args = " ".join(
+        f"-B {_quote_path(root)}:{_quote_path(root)}"
+        for root in sorted(bind_roots)
+    )
+    
+    if analysis_type in (
+    "frozen_glom_segmentation",
+    "multicompartment_segmentation"):
+        NV='--nv'
+    else: 
+        NV=""
+    
     apptainer_cmd_parts = [
-        "apptainer exec",
-        f"-B {workspace_path}:{mount_point}",
+        f"apptainer exec {NV} {bind_args}",
         f"docker://{config['image']}",
         f"python {config['script']}"
     ]
 
     # Add user-provided and auto-derived parameters to the apptainer command.
-    # path_params are prefixed with the container mount point (/data).
-    # skip_script_params are used locally for derivation but not passed to the script.
-    path_params = config.get('path_params', set())
+    # Paths are already absolute host paths, and the same roots are bound into the container.
     skip_script_params = config.get('skip_script_params', set())
+    
     for param_name, param_value in user_params.items():
         if param_name in skip_script_params:
             continue
+    
         if param_value is not None:
-            if param_name in path_params:
-                if isinstance(param_value, list):
-                    paths_str = " ".join(f"{mount_point}/{p}" for p in param_value)
-                    apptainer_cmd_parts.append(f"--{param_name} {paths_str}")
-                else:
-                    apptainer_cmd_parts.append(f"--{param_name} {mount_point}/{param_value}")
+            if isinstance(param_value, list):
+                paths_str = " ".join(_quote_path(p) for p in param_value)
+                apptainer_cmd_parts.append(f"--{param_name} {paths_str}")
             else:
-                apptainer_cmd_parts.append(f"--{param_name} {param_value}")
+                apptainer_cmd_parts.append(f"--{param_name} {_quote_path(param_value)}")
         else:
             apptainer_cmd_parts.append(f"--{param_name}")
-
-    # Add fixed (hardcoded) params — quote values that contain spaces.
-    for param_name, param_value in config.get('fixed_params', {}).items():
-        quoted = f"'{param_value}'" if ' ' in str(param_value) else str(param_value)
-        apptainer_cmd_parts.append(f"--{param_name} {quoted}")
+    
+        # Add fixed (hardcoded) params — quote values that contain spaces.
+        for param_name, param_value in config.get('fixed_params', {}).items():
+            quoted = _quote_path(param_value)
+            apptainer_cmd_parts.append(f"--{param_name} {quoted}")
             
     apptainer_command = " \\\n  ".join(apptainer_cmd_parts)
 
@@ -575,15 +775,8 @@ def run_apptainer_analysis():
 
     primary = config.get('primary_input', 'input_file')
     if primary in user_params:
-        relative_input_path = user_params[primary]
-        clean_relative_path = relative_input_path.lstrip(os.sep).lstrip('.')
-
-        # Walk up input_depth levels to reach the dataset root
-        dataset_rel = clean_relative_path
-        for _ in range(config.get('input_depth', 2)):
-            dataset_rel = os.path.dirname(dataset_rel)
-
-        logs_dir = os.path.join(workspace_path, dataset_rel, 'logs')
+        dataset_rel = dataset_root
+        logs_dir = os.path.join(dataset_root, 'logs')
         os.makedirs(logs_dir, exist_ok=True)
         target_dir = logs_dir
 
@@ -595,17 +788,17 @@ def run_apptainer_analysis():
     cleanup_cmd = ""
     pre_cmd = ""
     if analysis_type == "label_transfer" and primary in user_params:
-        abs_dataset_root = os.path.join(workspace_path, dataset_rel)
-        cleanup_cmd = f"\nrm -rf {abs_dataset_root}/expr_components"
+        abs_dataset_root = dataset_rel
+        cleanup_cmd = f"\nrm -rf {_quote_path(os.path.join(abs_dataset_root, 'expr_components'))}"
     elif analysis_type == "spot_annotation" and primary in user_params:
-        abs_files_dir = os.path.join(workspace_path, dataset_rel, "Files")
+        abs_files_dir = os.path.join(dataset_rel, "Files")
         cleanup_cmd = f"\nmv {abs_files_dir}/*_annotations.json {abs_files_dir}/Spots.json"
     elif analysis_type == "spatial_aggregation" and 'agg_annotations' in user_params:
         import json as _json
-        abs_output_dir = os.path.join(workspace_path, user_params['output_dir'])
+        abs_output_dir = user_params['output_dir']
         mkdir_lines = []
         for ann_path in user_params['agg_annotations']:
-            abs_ann_path = os.path.join(workspace_path, ann_path)
+            abs_ann_path = ann_path
             try:
                 with open(abs_ann_path) as _f:
                     ann_data = _json.load(_f)
@@ -613,7 +806,7 @@ def run_apptainer_analysis():
                             or ann_data.get('name', ''))
                 if '/' in ann_name:
                     subdir = os.path.join(abs_output_dir, os.path.dirname(ann_name))
-                    mkdir_lines.append(f"mkdir -p {subdir}")
+                    mkdir_lines.append(f"mkdir -p {_quote_path(subdir)}")
             except Exception:
                 pass
         if mkdir_lines:
@@ -628,6 +821,10 @@ find {abs_output_dir} -mindepth 2 -type f | while IFS= read -r filepath; do
 done
 find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 
+    gpu_lines = ""
+    if gpus > 0 and partition and _is_hipergator():
+        gpu_lines = f"#SBATCH --partition={partition}\n#SBATCH --gpus={gpus}"
+    
     # create a submission script content
     slurm_script_content = f"""#!/bin/bash
 #SBATCH --job-name={job_name}
@@ -636,6 +833,8 @@ find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 #SBATCH --mem={mem_limit}
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task={cpus}
+{gpu_lines}
+{cache_lines}
 
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
