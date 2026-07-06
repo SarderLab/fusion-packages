@@ -102,34 +102,61 @@ def download_folder_zip_from_fusion_backend(gc, folder_id, output_dir="."):
 
 def download_from_fusion_to_workspace(gc, resource_id, resource_type="file", output_dir="."):
     output_dir = _resolve_local_path(output_dir, must_exist=False)
-    
+
     if resource_type == "file":
         info = gc.get(f"/file/{resource_id}")
         file_name = info["name"]
-        
+
         # Use the file name as the folder name
         folder_name = os.path.splitext(file_name)[0]
         folder_path = os.path.join(output_dir, "datasets", folder_name, "image")
         os.makedirs(folder_path, exist_ok=True)
-        
+
         # Set the final output path inside the new folder
         out_path = os.path.join(folder_path, file_name)
-        
+
         print(f"Downloading file: {file_name} ({info.get('size', 'unknown')} bytes) to {out_path}...")
         gc.downloadFile(resource_id, path=out_path)
-        
+
     elif resource_type == "item":
         os.makedirs(output_dir, exist_ok=True)
         info = gc.get(f"/item/{resource_id}")
         item_name = info["name"]
-        
+
         print(f"Downloading item: {item_name} to {output_dir}/...")
         gc.downloadItem(resource_id, output_dir)
         out_path = os.path.join(output_dir, item_name)
-        
+
+    elif resource_type == "folder":
+        info = gc.get(f"/folder/{resource_id}")
+        folder_name = info["name"]
+
+        out_path = os.path.join(output_dir, folder_name)
+        os.makedirs(out_path, exist_ok=True)
+
+        print(f"Downloading folder: {folder_name} to {out_path}/...")
+
+        # Download all items directly inside this folder
+        for item in gc.listItem(resource_id):
+            download_from_fusion_to_workspace(
+                gc,
+                resource_id=item["_id"],
+                resource_type="item",
+                output_dir=out_path
+            )
+
+        # Recursively download all subfolders
+        for subfolder in gc.listFolder(resource_id):
+            download_from_fusion_to_workspace(
+                gc,
+                resource_id=subfolder["_id"],
+                resource_type="folder",
+                output_dir=out_path
+            )
+
     else:
-        raise ValueError("resource_type must be either 'file' or 'item'")
-        
+        raise ValueError("resource_type must be either 'file', 'item', or 'folder'")
+
     print("Done.")
     return out_path
 
