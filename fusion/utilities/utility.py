@@ -1034,10 +1034,14 @@ def upload_to_fusion_backend(gc, hubmap_id=None, user=None, file_path=None, file
                 print("Error: No image folder (ometiff-pyramids/image/images) found in directory.")
                 return {"error": "No image folder found in directory."}
 
-            tif_files = [f for f in os.listdir(image_folder) if f.endswith(".tif")]
+            if image_folder is None:
+                print("Error: No image folder (ometiff-pyramids/image/images) found in directory.")
+                return {"error": "No image folder found in directory."}
+
+            tif_files = [f for f in os.listdir(image_folder) if f.endswith((".tif", ".tiff", ".svs"))]
             if not tif_files:
-                print("Error: image folder should have one .tif file")
-                return {"error": "image folder should have one .tif file"}
+                print("Error: image folder should have one .tif/.tiff/.svs file")
+                return {"error": "image folder should have one .tif/.tiff/.svs file"}
 
             if len(tif_files) == 1:
                 tif_to_upload = os.path.join(image_folder, tif_files[0])
