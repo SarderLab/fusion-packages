@@ -9,17 +9,17 @@ name = "fusion"
 description = "fusion tools, plugins and utilities for Jupyter notebooks in the HuBMAP workspace."
 dynamic = ["version"]
 dependencies = [    
-    "requests",
-    "pandas", 
-    "girder-client",
+    "requests==2.32.5",
+    "pandas==2.1.4", 
+    "girder-client==",
     "jupyter-server-proxy",
     "ipyleaflet>=0.19",
-    "ipython",
-    "tifffile", 
-    "numpy",
+    "ipython==8.14.0",
+    "tifffile==2024.8.30", 
+    "numpy==1.24.1",
     "pathlib",
     "tqdm>=4.0",
-    "anndata"]
+    "anndata==0.11.4"]
 requires-python = ">=3.9"
 authors = [
   {name = "Srisharanya Injarapu", email = "injarapu.s@ufl.edu"},
