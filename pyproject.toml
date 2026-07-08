@@ -11,7 +11,7 @@ dynamic = ["version"]
 dependencies = [    
     "requests==2.32.5",
     "pandas==2.1.4", 
-    "girder-client==",
+    "girder-client",
     "jupyter-server-proxy",
     "ipyleaflet>=0.19",
     "ipython==8.14.0",
