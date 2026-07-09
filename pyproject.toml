@@ -16,8 +16,7 @@ dependencies = [
     "ipyleaflet>=0.19",
     "ipython==8.14.0",
     "tifffile==2024.8.30", 
-    "numpy==1.24.1",
-    "pathlib",
+    "numpy>=1.24.1",
     "tqdm>=4.0",
     "anndata==0.11.4"]
 requires-python = ">=3.9"
