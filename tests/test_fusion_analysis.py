@@ -10,11 +10,17 @@ Run:
 
 import sys
 import os
+import tempfile
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fusion.plugins.plugins import _track_slurm_job, _stream_slurm_log, _SLURM_JOBS
+from fusion.plugins.plugins import (
+    _track_slurm_job,
+    _stream_slurm_log,
+    _SLURM_JOBS,
+    run_apptainer_analysis,
+)
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -108,6 +114,79 @@ def test_slurm_stream_timeout():
     print("  PASSED: stream TIMEOUT path")
 
 
+def test_bulk_segmentation_submits_one_job_per_image():
+    """Bulk image paths reuse one model prompt and create a job per image."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        dataset_dir = os.path.join(temp_dir, "dataset")
+        image_dir = os.path.join(dataset_dir, "ometiff-pyramids")
+        os.makedirs(image_dir)
+        image_paths = [
+            os.path.join(image_dir, "image one.tif"),
+            os.path.join(image_dir, "image-two.tif"),
+        ]
+        model_path = os.path.join(temp_dir, "model.pth")
+        for path in image_paths + [model_path]:
+            open(path, "w").close()
+
+        submitted = [
+            MagicMock(stdout="Submitted batch job 70001\n"),
+            MagicMock(stdout="Submitted batch job 70002\n"),
+        ]
+        with patch("builtins.input", side_effect=["1", model_path]) as mock_input, \
+             patch("fusion.plugins.plugins.subprocess.run", side_effect=submitted) as mock_run:
+            results = run_apptainer_analysis(file_paths=image_paths)
+
+        assert mock_input.call_count == 2
+        assert mock_run.call_count == 2
+        assert [result["input_path"] for result in results] == image_paths
+        assert results[0]["script_path"].endswith(
+            "multicompartment_segmentation_image_one_submit.sh"
+        )
+        assert results[1]["script_path"].endswith(
+            "multicompartment_segmentation_image-two_submit.sh"
+        )
+
+        with open(results[0]["script_path"]) as script:
+            first_script = script.read()
+        assert image_paths[0] in first_script
+        assert image_paths[1] not in first_script
+        assert model_path in first_script
+    print("  PASSED: bulk segmentation submits one job per image")
+
+
+def test_bulk_label_transfer_submits_one_job_per_counts_file():
+    """Non-segmentation plugins also reuse shared inputs across primary files."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        counts_paths = [
+            os.path.join(temp_dir, "sample_1", "counts one.h5ad"),
+            os.path.join(temp_dir, "sample_2", "counts-two.h5ad"),
+        ]
+        reference_path = os.path.join(temp_dir, "reference.h5seurat")
+        for path in counts_paths:
+            os.makedirs(os.path.dirname(path))
+            open(path, "w").close()
+        open(reference_path, "w").close()
+
+        submitted = [
+            MagicMock(stdout="Submitted batch job 71001\n"),
+            MagicMock(stdout="Submitted batch job 71002\n"),
+        ]
+        with patch("builtins.input", side_effect=["4", reference_path]) as mock_input, \
+             patch("fusion.plugins.plugins.sanitize_h5ad_obsm"), \
+             patch("fusion.plugins.plugins.subprocess.run", side_effect=submitted) as mock_run:
+            results = run_apptainer_analysis(file_paths=counts_paths)
+
+        assert mock_input.call_count == 2
+        assert mock_run.call_count == 2
+        assert [result["input_path"] for result in results] == counts_paths
+        for result, counts_path in zip(results, counts_paths):
+            with open(result["script_path"]) as script:
+                content = script.read()
+            assert counts_path in content
+            assert reference_path in content
+    print("  PASSED: bulk label transfer reuses the shared reference")
+
+
 # ── Runner ─────────────────────────────────────────────────────────────────────
 
 TESTS = [
@@ -117,6 +196,8 @@ TESTS = [
     ("slurm:  stream FAILED path",                  test_slurm_stream_failed),
     ("slurm:  stream CG state handled",             test_slurm_stream_completing_state),
     ("slurm:  stream TIMEOUT path",                 test_slurm_stream_timeout),
+    ("slurm:  bulk segmentation submission",        test_bulk_segmentation_submits_one_job_per_image),
+    ("slurm:  bulk label transfer submission",       test_bulk_label_transfer_submits_one_job_per_counts_file),
 ]
 
 if __name__ == '__main__':

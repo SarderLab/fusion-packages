@@ -495,9 +495,13 @@ def _get_apptainer_cache_lines():
         f"export APPTAINER_TMPDIR={_quote_path(tmp_path)}"
     )
             
-def run_apptainer_analysis():
+def run_apptainer_analysis(file_paths=None, _analysis_type=None, _parameter_values=None, _batch_job_name=None):
     """
-    Interactive function to generate and submit analysis tasks using Apptainer containers via Slurm.
+    Generate and submit analysis tasks using Apptainer containers via Slurm.
+
+    ``file_paths`` may contain multiple primary input paths for the selected
+    analysis. The analysis and shared parameters are selected once, then one
+    Slurm job is submitted for each primary input.
     """
     # Container image mapping with their specific parameters.
     # output_dir is auto-derived from the primary input path — do not add it to params.
@@ -569,24 +573,28 @@ def run_apptainer_analysis():
         }
     }
 
-    # Display available analysis options
-    print("Available Analysis Tasks:")
-    print("-" * 30)
-    for i, (key, config) in enumerate(container_configs.items(), 1):
-        print(f"{i}. {key.replace('_', ' ').title()}")
+    if _analysis_type is None:
+        # Display available analysis options
+        print("Available Analysis Tasks:")
+        print("-" * 30)
+        for i, (key, config) in enumerate(container_configs.items(), 1):
+            print(f"{i}. {key.replace('_', ' ').title()}")
 
-    # Get user selection for analysis type
-    while True:
-        try:
-            choice = int(input(f"\nSelect analysis task (1-{len(container_configs)}): "))
-            if 1 <= choice <= len(container_configs):
-                analysis_type = list(container_configs.keys())[choice - 1]
-                config = container_configs[analysis_type]
-                break
-            else:
-                print(f"Please enter a number between 1 and {len(container_configs)}")
-        except ValueError:
-            print("Please enter a valid number")
+        # Get user selection for analysis type
+        while True:
+            try:
+                choice = int(input(f"\nSelect analysis task (1-{len(container_configs)}): "))
+                if 1 <= choice <= len(container_configs):
+                    analysis_type = list(container_configs.keys())[choice - 1]
+                    config = container_configs[analysis_type]
+                    break
+                else:
+                    print(f"Please enter a number between 1 and {len(container_configs)}")
+            except ValueError:
+                print("Please enter a valid number")
+    else:
+        analysis_type = _analysis_type
+        config = container_configs[analysis_type]
 
     print(f"\nSelected: {analysis_type.replace('_', ' ').title()}")
     print(f"Container: {config['image']}")
@@ -595,16 +603,42 @@ def run_apptainer_analysis():
     mount_point = "/data"
 
     # Get parameters specific to this container
-    user_params = {}
+    user_params = dict(_parameter_values or {})
     if config['params']:
         print(f"\nRequired parameters for {analysis_type.replace('_', ' ').title()}:")
         print("-" * 40)
         for param in config['params']:
+            if param in user_params:
+                continue
+            if (
+                file_paths is not None
+                and param == config['primary_input']
+            ):
+                if isinstance(file_paths, (str, os.PathLike)):
+                    file_paths = [file_paths]
+                if not file_paths:
+                    raise ValueError("file_paths must contain at least one primary input path.")
+                user_params[param] = [
+                    _resolve_user_path(path, must_exist=True) for path in file_paths
+                ]
+                continue
             while True:
-                value = input(f"Enter {param} path: ").strip()
+                prompt = f"Enter {param} path: "
+                if param == config['primary_input']:
+                    prompt = f"Enter one or more {param} paths (comma-separated): "
+                value = input(prompt).strip()
                 if value:
                     try:
-                        user_params[param] = _resolve_user_path(value, must_exist=True)
+                        if param == config['primary_input']:
+                            paths = [path.strip() for path in value.split(',') if path.strip()]
+                            resolved_paths = [
+                                _resolve_user_path(path, must_exist=True) for path in paths
+                            ]
+                            user_params[param] = (
+                                resolved_paths if len(resolved_paths) > 1 else resolved_paths[0]
+                            )
+                        else:
+                            user_params[param] = _resolve_user_path(value, must_exist=True)
                         break
                     except FileNotFoundError as e:
                         print(f"\nError: {e}\n")
@@ -612,6 +646,29 @@ def run_apptainer_analysis():
                     print(f"{param} is required. Please enter a value.")
     else:
         print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
+
+    primary = config.get('primary_input')
+    primary_values = user_params.get(primary)
+    if isinstance(primary_values, list):
+        print(f"\nSubmitting {len(primary_values)} {analysis_type.replace('_', ' ')} jobs...")
+        submissions = []
+        for index, input_path in enumerate(primary_values, 1):
+            image_params = dict(user_params)
+            image_params[primary] = input_path
+            input_stem = os.path.splitext(os.path.basename(input_path))[0]
+            safe_stem = re.sub(r'[^A-Za-z0-9_-]+', '_', input_stem).strip('_') or str(index)
+            print(f"\n[{index}/{len(primary_values)}] {input_path}")
+            script_path = run_apptainer_analysis(
+                _analysis_type=analysis_type,
+                _parameter_values=image_params,
+                _batch_job_name=f"{analysis_type}_{safe_stem}",
+            )
+            submissions.append({
+                'input_path': input_path,
+                'script_path': script_path,
+            })
+        print(f"\nBulk submission complete: {len(submissions)} job(s) processed.")
+        return submissions
     
     if analysis_type == "label_transfer" and "counts_file" in user_params:
         h5ad_abs = user_params["counts_file"]
@@ -711,7 +768,7 @@ def run_apptainer_analysis():
                     print("Please enter numbers separated by commas.")
 
     # Job name is derived from the analysis type key (already snake_case)
-    job_name = analysis_type
+    job_name = _batch_job_name or analysis_type
 
     # Match resources to the current JupyterHub Slurm session
     time_limit, mem_limit, cpus, gpus, partition = _get_jupyter_slurm_resources(analysis_type)
@@ -1210,7 +1267,9 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         user_name (str): Athena username (required when backend='fusion').
         hubmap_id (str): HubMAP ID to process. For 'notebook', auto-downloads the dataset to the workspace. For 'fusion', uploads it to the Fusion backend.
         file_path (str): Local file path to process (optional, fusion only).
-        file_paths (list): List of local file paths to process (optional, fusion only).
+        file_paths (list): List of local file paths to process. For the notebook
+            backend, these are the selected analysis's primary inputs and one
+            job is submitted per path.
         dir_path (str): Local directory path; all files in the directory will be uploaded and processed (optional, fusion only).
     """
     print("Running from:", __file__)
@@ -1222,7 +1281,7 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         if hubmap_id is not None:
             HuBMAP_to_workspace_download(hubmap_id)
         
-        return run_apptainer_analysis()
+        return run_apptainer_analysis(file_paths=file_paths)
     
     elif backend == 'fusion':
         if gc is None or user_name is None:
