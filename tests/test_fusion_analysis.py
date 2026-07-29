@@ -133,10 +133,12 @@ def test_bulk_segmentation_submits_one_job_per_image():
             MagicMock(stdout="Submitted batch job 70002\n"),
         ]
         with patch("builtins.input", side_effect=["1", model_path]) as mock_input, \
+             patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value="") as mock_cache, \
              patch("fusion.plugins.plugins.subprocess.run", side_effect=submitted) as mock_run:
             results = run_apptainer_analysis(file_paths=image_paths)
 
         assert mock_input.call_count == 2
+        mock_cache.assert_called_once_with()
         assert mock_run.call_count == 2
         assert [result["input_path"] for result in results] == image_paths
         assert results[0]["script_path"].endswith(
@@ -173,10 +175,12 @@ def test_bulk_label_transfer_submits_one_job_per_counts_file():
         ]
         with patch("builtins.input", side_effect=["4", reference_path]) as mock_input, \
              patch("fusion.plugins.plugins.sanitize_h5ad_obsm"), \
+             patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value="") as mock_cache, \
              patch("fusion.plugins.plugins.subprocess.run", side_effect=submitted) as mock_run:
             results = run_apptainer_analysis(file_paths=counts_paths)
 
         assert mock_input.call_count == 2
+        mock_cache.assert_called_once_with()
         assert mock_run.call_count == 2
         assert [result["input_path"] for result in results] == counts_paths
         for result, counts_path in zip(results, counts_paths):

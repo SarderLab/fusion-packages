@@ -495,7 +495,13 @@ def _get_apptainer_cache_lines():
         f"export APPTAINER_TMPDIR={_quote_path(tmp_path)}"
     )
             
-def run_apptainer_analysis(file_paths=None, _analysis_type=None, _parameter_values=None, _batch_job_name=None):
+def run_apptainer_analysis(
+    file_paths=None,
+    _analysis_type=None,
+    _parameter_values=None,
+    _batch_job_name=None,
+    _cache_lines=None,
+):
     """
     Generate and submit analysis tasks using Apptainer containers via Slurm.
 
@@ -623,9 +629,7 @@ def run_apptainer_analysis(file_paths=None, _analysis_type=None, _parameter_valu
                 ]
                 continue
             while True:
-                prompt = f"Enter {param} path: "
-                if param == config['primary_input']:
-                    prompt = f"Enter one or more {param} paths (comma-separated): "
+                prompt = f"Enter {param} paths (comma-separated): "
                 value = input(prompt).strip()
                 if value:
                     try:
@@ -650,6 +654,7 @@ def run_apptainer_analysis(file_paths=None, _analysis_type=None, _parameter_valu
     primary = config.get('primary_input')
     primary_values = user_params.get(primary)
     if isinstance(primary_values, list):
+        cache_lines = _cache_lines if _cache_lines is not None else _get_apptainer_cache_lines()
         print(f"\nSubmitting {len(primary_values)} {analysis_type.replace('_', ' ')} jobs...")
         submissions = []
         for index, input_path in enumerate(primary_values, 1):
@@ -662,6 +667,7 @@ def run_apptainer_analysis(file_paths=None, _analysis_type=None, _parameter_valu
                 _analysis_type=analysis_type,
                 _parameter_values=image_params,
                 _batch_job_name=f"{analysis_type}_{safe_stem}",
+                _cache_lines=cache_lines,
             )
             submissions.append({
                 'input_path': input_path,
@@ -773,7 +779,7 @@ def run_apptainer_analysis(file_paths=None, _analysis_type=None, _parameter_valu
     # Match resources to the current JupyterHub Slurm session
     time_limit, mem_limit, cpus, gpus, partition = _get_jupyter_slurm_resources(analysis_type)
     
-    cache_lines = _get_apptainer_cache_lines()
+    cache_lines = _cache_lines if _cache_lines is not None else _get_apptainer_cache_lines()
     path_params = config.get('path_params', set())
     bind_roots = set()
     
