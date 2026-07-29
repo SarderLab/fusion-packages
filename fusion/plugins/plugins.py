@@ -629,7 +629,10 @@ def run_apptainer_analysis(
                 ]
                 continue
             while True:
-                prompt = f"Enter {param} paths (comma-separated): "
+                if param == config['primary_input']:
+                    prompt = f"Enter {param} paths (comma separated): "
+                else:
+                    prompt = f"Enter {param} path: "
                 value = input(prompt).strip()
                 if value:
                     try:
