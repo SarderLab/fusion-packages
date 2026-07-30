@@ -411,7 +411,7 @@ def _get_apptainer_cache_lines():
                 f"Could not prepare Plugin Files Storage: {e}"
             ) from e
 
-        print(f"\Plugin files will be stored in: {cache_path}")
+        print(f"\nPlugin files will be stored in: {cache_path}")
 
         return (
             f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
@@ -605,17 +605,16 @@ def run_apptainer_analysis(
     print(f"\nSelected: {analysis_type.replace('_', ' ').title()}")
     print(f"Container: {config['image']}")
 
-    workspace_path = get_hive_workspace_root()
-    mount_point = "/data"
-
     # Get parameters specific to this container
     user_params = dict(_parameter_values or {})
-    if config['params']:
+    missing_params = [
+        param for param in config['params']
+        if param not in user_params
+    ]
+    if missing_params:
         print(f"\nRequired parameters for {analysis_type.replace('_', ' ').title()}:")
         print("-" * 40)
-        for param in config['params']:
-            if param in user_params:
-                continue
+        for param in missing_params:
             if (
                 file_paths is not None
                 and param == config['primary_input']
@@ -651,7 +650,7 @@ def run_apptainer_analysis(
                         print(f"\nError: {e}\n")
                 else:
                     print(f"{param} is required. Please enter a value.")
-    else:
+    elif not config['params']:
         print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
 
     primary = config.get('primary_input')
@@ -679,7 +678,11 @@ def run_apptainer_analysis(
         print(f"\nBulk submission complete: {len(submissions)} job(s) processed.")
         return submissions
     
-    if analysis_type == "label_transfer" and "counts_file" in user_params:
+    if (
+        analysis_type == "label_transfer"
+        and "counts_file" in user_params
+        and user_params["counts_file"].lower().endswith(".h5ad")
+    ):
         h5ad_abs = user_params["counts_file"]
         #print("\nChecking h5ad file for non-numeric 'DeepScence' obsm columns...")
         #print("─" * 55)

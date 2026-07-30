@@ -161,7 +161,7 @@ def test_bulk_label_transfer_submits_one_job_per_counts_file():
     with tempfile.TemporaryDirectory() as temp_dir:
         counts_paths = [
             os.path.join(temp_dir, "sample_1", "counts one.h5ad"),
-            os.path.join(temp_dir, "sample_2", "counts-two.h5ad"),
+            os.path.join(temp_dir, "sample_2", "counts-two.RDS"),
         ]
         reference_path = os.path.join(temp_dir, "reference.h5seurat")
         for path in counts_paths:
@@ -174,12 +174,13 @@ def test_bulk_label_transfer_submits_one_job_per_counts_file():
             MagicMock(stdout="Submitted batch job 71002\n"),
         ]
         with patch("builtins.input", side_effect=["4", reference_path]) as mock_input, \
-             patch("fusion.plugins.plugins.sanitize_h5ad_obsm"), \
+             patch("fusion.plugins.plugins.sanitize_h5ad_obsm") as mock_sanitize, \
              patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value="") as mock_cache, \
              patch("fusion.plugins.plugins.subprocess.run", side_effect=submitted) as mock_run:
             results = run_apptainer_analysis(file_paths=counts_paths)
 
         assert mock_input.call_count == 2
+        mock_sanitize.assert_called_once_with(counts_paths[0])
         mock_cache.assert_called_once_with()
         assert mock_run.call_count == 2
         assert [result["input_path"] for result in results] == counts_paths
