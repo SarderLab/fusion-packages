@@ -408,10 +408,10 @@ def _get_apptainer_cache_lines():
             os.makedirs(tmp_path, exist_ok=True)
         except OSError as e:
             raise RuntimeError(
-                f"Could not prepare temporary storage: {e}"
+                f"Could not prepare Plugin Files Storage: {e}"
             ) from e
 
-        print(f"\nTemporary files will be stored in: {cache_path}")
+        print(f"\Plugin files will be stored in: {cache_path}")
 
         return (
             f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
@@ -421,9 +421,9 @@ def _get_apptainer_cache_lines():
     # HiPerGator: keep the existing storage choices.
     saved_path = config.get("apptainer_cache")
 
-    print("\nTemporary Storage:")
+    print("\nPlugin Storage Location:")
     print("-" * 40)
-    print("  [1] Use Standard Location")
+    print("  [1] Use Standard Location (Ensure it has Atleast 15+ GB of Free Space)")
 
     if saved_path:
         print("  [2] Choose Another Location (path in /blue)")
@@ -488,7 +488,7 @@ def _get_apptainer_cache_lines():
             f"Could not prepare container storage: {e}"
         ) from e
 
-    print(f"Temporary files will be stored in: {cache_path}")
+    print(f"Plugin files will be stored in: {cache_path}")
 
     return (
         f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
