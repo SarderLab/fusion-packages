@@ -19,6 +19,7 @@ from fusion.plugins.plugins import (
     _track_slurm_job,
     _stream_slurm_log,
     _SLURM_JOBS,
+    _xenium_registration_orientation,
     run_apptainer_analysis,
 )
 
@@ -132,12 +133,12 @@ def test_bulk_segmentation_submits_one_job_per_image():
             MagicMock(stdout="Submitted batch job 70001\n"),
             MagicMock(stdout="Submitted batch job 70002\n"),
         ]
-        with patch("builtins.input", side_effect=["1", model_path]) as mock_input, \
+        with patch("builtins.input", side_effect=["1", "1", model_path]) as mock_input, \
              patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value="") as mock_cache, \
              patch("fusion.plugins.plugins.subprocess.run", side_effect=submitted) as mock_run:
             results = run_apptainer_analysis(file_paths=image_paths)
 
-        assert mock_input.call_count == 2
+        assert mock_input.call_count == 3
         mock_cache.assert_called_once_with()
         assert mock_run.call_count == 2
         assert [result["input_path"] for result in results] == image_paths
@@ -173,13 +174,13 @@ def test_bulk_label_transfer_submits_one_job_per_counts_file():
             MagicMock(stdout="Submitted batch job 71001\n"),
             MagicMock(stdout="Submitted batch job 71002\n"),
         ]
-        with patch("builtins.input", side_effect=["4", reference_path]) as mock_input, \
+        with patch("builtins.input", side_effect=["1", "4", reference_path]) as mock_input, \
              patch("fusion.plugins.plugins.sanitize_h5ad_obsm") as mock_sanitize, \
              patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value="") as mock_cache, \
              patch("fusion.plugins.plugins.subprocess.run", side_effect=submitted) as mock_run:
             results = run_apptainer_analysis(file_paths=counts_paths)
 
-        assert mock_input.call_count == 2
+        assert mock_input.call_count == 3
         mock_sanitize.assert_called_once_with(counts_paths[0])
         mock_cache.assert_called_once_with()
         assert mock_run.call_count == 2
@@ -190,6 +191,121 @@ def test_bulk_label_transfer_submits_one_job_per_counts_file():
             assert counts_path in content
             assert reference_path in content
     print("  PASSED: bulk label transfer reuses the shared reference")
+
+
+def _submit_result(job_id="72001"):
+    return MagicMock(stdout=f"Submitted batch job {job_id}\n")
+
+
+def test_xenium_registration_orientations():
+    """Known IU ranges select their fixed orientation; other names use the default."""
+    assert _xenium_registration_orientation("HE_IU01.tif") == (2, 1, False)
+    assert _xenium_registration_orientation("HE_IU20.tif") == (2, 1, False)
+    assert _xenium_registration_orientation("HE_IU90.tif") == (1, 1, False)
+    assert _xenium_registration_orientation("HE_IU99.tif") == (1, 1, False)
+    assert _xenium_registration_orientation("HE_IU21.tif") == (2, 1, True)
+    assert _xenium_registration_orientation("sample.tif") == (2, 1, True)
+    print("  PASSED: Xenium registration orientation rules")
+
+
+def test_xenium_frozen_glom_script():
+    """Frozen glomerulus uses the unified Xenium output/log layout and fixed defaults."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        input_dir = os.path.join(temp_dir, "input")
+        os.makedirs(input_dir)
+        image_path = os.path.join(input_dir, "sample.svs")
+        model_path = os.path.join(input_dir, "model.zip")
+        for path in (image_path, model_path):
+            open(path, "w").close()
+
+        with patch("builtins.input", side_effect=["2", "1", image_path, model_path]), \
+             patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
+             patch("fusion.plugins.plugins.subprocess.run", return_value=_submit_result()):
+            script_path = run_apptainer_analysis()
+
+        with open(script_path) as script:
+            content = script.read()
+        expected_output = os.path.join(temp_dir, "output", "sample_glomeruli.json")
+        assert "sarderlab/fusion2.0_decoupled:histo_cloud" in content
+        assert "SegmentWSILocal.py" in content
+        assert f"--outputAnnotationFile {expected_output}" in content
+        assert "--patch_size 2000" in content
+        assert "--simplify_contours 0.005" in content
+        assert "#SBATCH --time=12:00:00" in content
+        assert "#SBATCH --gpus=1" in content
+    print("  PASSED: Xenium frozen glomerulus script")
+
+
+def test_xenium_registration_and_feature_scripts():
+    """Registration and feature extraction share an image but use distinct CLIs."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        input_dir = os.path.join(temp_dir, "input")
+        sample_output = os.path.join(temp_dir, "output", "HE_IU95")
+        os.makedirs(input_dir)
+        os.makedirs(sample_output)
+        paths = {
+            "image": os.path.join(input_dir, "HE_IU95.tif"),
+            "nuc": os.path.join(input_dir, "HE_IU95_nucleus_boundaries.csv.gz"),
+            "cell": os.path.join(input_dir, "HE_IU95_cell_boundaries.csv.gz"),
+        }
+        for path in paths.values():
+            open(path, "w").close()
+
+        with patch("builtins.input", side_effect=[
+                "2", "2", paths["image"], paths["nuc"], paths["cell"]
+             ]), patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
+             patch("fusion.plugins.plugins.subprocess.run", return_value=_submit_result("72002")):
+            registration_script = run_apptainer_analysis()
+
+        with open(registration_script) as script:
+            registration = script.read()
+        assert "registration-feature_extraction" in registration
+        assert "RegistrationLocal.py" in registration
+        assert "--flip 1" in registration and "--rot 1" in registration
+        assert "--exp_factor 1" in registration
+        assert "--downsample_factor 4" in registration
+        assert f"--output_dir {os.path.join(temp_dir, 'output')}" in registration
+
+        with patch("builtins.input", side_effect=["2", "3", sample_output]), \
+             patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
+             patch("fusion.plugins.plugins.subprocess.run", return_value=_submit_result("72003")):
+            feature_script = run_apptainer_analysis()
+
+        with open(feature_script) as script:
+            feature = script.read()
+        assert "registration-feature_extraction" in feature
+        assert "XeniumFELocal.py" in feature
+        assert f"--input_path {sample_output}" in feature
+        assert "--output_dir" not in feature
+    print("  PASSED: Xenium registration and feature extraction scripts")
+
+
+def test_xenium_add_cell_annotation_script():
+    """Cell annotation prompts for both files and emits no optional arguments."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        sample_output = os.path.join(temp_dir, "output", "HE_IU20")
+        os.makedirs(sample_output)
+        features = os.path.join(sample_output, "Xenium Cells Features.json")
+        groups = os.path.join(sample_output, "cell_groups.csv")
+        for path in (features, groups):
+            open(path, "w").close()
+
+        with patch("builtins.input", side_effect=["2", "4", features, groups]), \
+             patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
+             patch("fusion.plugins.plugins.subprocess.run", return_value=_submit_result("72004")):
+            script_path = run_apptainer_analysis()
+
+        with open(script_path) as script:
+            content = script.read()
+        assert "sarderlab/fusion2.0_decoupled:add_cell_annotation" in content
+        assert f"--features-json-path '{features}'" in content
+        assert f"--cell-groups-path {groups}" in content
+        assert "--annotation-column pred.subclass.l1" in content
+        assert f"--output-dir {os.path.join(temp_dir, 'output')}" in content
+        assert "custom-annots" not in content
+        assert "colors-path" not in content
+        assert "#SBATCH --gpus" not in content
+    print("  PASSED: Xenium add-cell-annotation script")
 
 
 # ── Runner ─────────────────────────────────────────────────────────────────────
@@ -203,6 +319,10 @@ TESTS = [
     ("slurm:  stream TIMEOUT path",                 test_slurm_stream_timeout),
     ("slurm:  bulk segmentation submission",        test_bulk_segmentation_submits_one_job_per_image),
     ("slurm:  bulk label transfer submission",       test_bulk_label_transfer_submits_one_job_per_counts_file),
+    ("xenium: registration orientation",              test_xenium_registration_orientations),
+    ("xenium: frozen glomerulus script",               test_xenium_frozen_glom_script),
+    ("xenium: registration and feature scripts",       test_xenium_registration_and_feature_scripts),
+    ("xenium: add cell annotation script",             test_xenium_add_cell_annotation_script),
 ]
 
 if __name__ == '__main__':

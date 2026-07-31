@@ -261,7 +261,39 @@ def _get_jupyter_slurm_resources(analysis_type=None):
         return "03:00:00", "64GB", 4, 0, None
     if analysis_type in ('frozen_glom_segmentation', 'multicompartment_segmentation'):
         return "03:00:00", "16gb", 2, 1, 'hpg-turin'
+    if analysis_type == 'xenium_frozen_glom_segmentation':
+        return "12:00:00", "32gb", 8, 1, None
+    if analysis_type == 'xenium_registration':
+        return "03:00:00", "64gb", 2, 1, None
+    if analysis_type == 'xenium_feature_extraction':
+        return "03:00:00", "32gb", 2, 1, None
+    if analysis_type == 'xenium_add_cell_annotation':
+        return "12:00:00", "32gb", 8, 0, None
     return "03:00:00", "16gb", 2, 0, None
+
+
+def _xenium_registration_orientation(input_image):
+    """Return the fixed registration orientation for a Xenium IU image."""
+    match = re.search(r'(?i)(?<![A-Za-z0-9])IU(\d{2})(?!\d)', os.path.basename(input_image))
+    if match and 90 <= int(match.group(1)) <= 99:
+        return 1, 1, False
+    if match and 1 <= int(match.group(1)) <= 20:
+        return 2, 1, False
+    return 2, 1, True
+
+
+def _derive_xenium_dataset_root(input_path):
+    """Derive the dataset root from a path below its input/ or output/ folder."""
+    current = os.path.abspath(input_path)
+    if not os.path.isdir(current):
+        current = os.path.dirname(current)
+    while current and current != os.path.dirname(current):
+        if os.path.basename(current).lower() in {'input', 'output'}:
+            return os.path.dirname(current)
+        current = os.path.dirname(current)
+    raise ValueError(
+        "Xenium inputs must be located within the dataset's input/ or output/ directory."
+    )
 
 def get_hive_workspace_root():
     """
@@ -497,6 +529,7 @@ def _get_apptainer_cache_lines():
             
 def run_apptainer_analysis(
     file_paths=None,
+    _modality=None,
     _analysis_type=None,
     _parameter_values=None,
     _batch_job_name=None,
@@ -517,7 +550,7 @@ def run_apptainer_analysis(
     # input_depth: how many os.path.dirname() calls from primary_input reach the dataset root.
     # output_subdir: subfolder under dataset root used as output_dir.
     # annotations_subdir: if set, also auto-derives --annotations_dir for that subfolder.
-    container_configs = {
+    visium_container_configs = {
         "multicompartment_segmentation": {
             "image": "sarderlab/fusion1.0_decoupled:multi_compartment_segmentation",
             "script": "/opt/MultiC/multic/cli/MultiC/MultiCLocal.py",
@@ -579,12 +612,99 @@ def run_apptainer_analysis(
         }
     }
 
+    xenium_container_configs = {
+        "xenium_frozen_glom_segmentation": {
+            "display_name": "Frozen Glomerulus Segmentation",
+            "image": "sarderlab/fusion2.0_decoupled:histo_cloud",
+            "script": "/HistomicsTK/histomicstk/cli/SegmentWSI/SegmentWSILocal.py",
+            "python": "python3",
+            "env_args": "--env PYTHONPATH=/HistomicsTK/histomicstk",
+            "params": ["inputImageFile", "inputModelFile"],
+            "path_params": {"inputImageFile", "inputModelFile", "outputAnnotationFile"},
+            "output_subdir": "output",
+            "primary_input": "inputImageFile",
+            "input_depth": 2,
+            "output_file_param": "outputAnnotationFile",
+            "output_file_suffix": "_glomeruli.json",
+            "fixed_params": {
+                "save_heatmap": "true", "heatmap_stride": 2, "wsi_downsample": 2,
+                "patch_size": 2000, "tile_stride": 1000, "remove_border": 100,
+                "batch_size": 1, "min_size": 2000, "simplify_contours": 0.005,
+                "gpu": 0,
+            },
+            "needs_gpu": True,
+        },
+        "xenium_registration": {
+            "display_name": "Registration",
+            "image": "sarderlab/fusion2.0_decoupled:registration-feature_extraction",
+            "script": "/opt/Xenium_Analysis/Xenium_Analysis/cli/Registration/RegistrationLocal.py",
+            "params": ["input_image", "nuc_boundaries", "cell_boundaries"],
+            "path_params": {"input_image", "nuc_boundaries", "cell_boundaries", "output_dir"},
+            "output_subdir": "output",
+            "primary_input": "input_image",
+            "input_depth": 2,
+            "fixed_params": {"exp_factor": 1, "downsample_factor": 4},
+            "needs_gpu": True,
+        },
+        "xenium_feature_extraction": {
+            "display_name": "Cell/Nucleus Feature Extraction",
+            "image": "sarderlab/fusion2.0_decoupled:registration-feature_extraction",
+            "script": "/opt/Xenium_Analysis/Xenium_Analysis/cli/XeniumFE/XeniumFELocal.py",
+            "params": ["input_path"],
+            "path_params": {"input_path"},
+            "output_subdir": "output",
+            "primary_input": "input_path",
+            "input_depth": 2,
+            "skip_auto_output_param": True,
+            "needs_gpu": True,
+        },
+        "xenium_add_cell_annotation": {
+            "display_name": "Add Cell Annotation",
+            "image": "sarderlab/fusion2.0_decoupled:add_cell_annotation",
+            "script": "/opt/add_cell_annotations/histomicstk/cli/AddCellAnnotations/AddCellAnnotationsLocal.py",
+            "python": "python3",
+            "params": ["features_json_path", "cell_groups_path"],
+            "cli_params": {
+                "features_json_path": "features-json-path",
+                "cell_groups_path": "cell-groups-path",
+                "annotation_column": "annotation-column",
+                "output_dir": "output-dir",
+            },
+            "path_params": {"features_json_path", "cell_groups_path", "output_dir"},
+            "output_subdir": "output",
+            "primary_input": "features_json_path",
+            "input_depth": 2,
+            "fixed_params": {"annotation_column": "pred.subclass.l1"},
+            "needs_gpu": False,
+        },
+    }
+
+    if _modality is None:
+        print("What dataset are you working with?")
+        print("-" * 30)
+        print("1. Visium")
+        print("2. Xenium")
+        while True:
+            modality_choice = input("\nSelect dataset type (1/2): ").strip()
+            if modality_choice in {"1", "2"}:
+                modality = "visium" if modality_choice == "1" else "xenium"
+                break
+            print("Please enter 1 or 2.")
+    else:
+        modality = _modality.lower()
+        if modality not in {"visium", "xenium"}:
+            raise ValueError("_modality must be 'visium' or 'xenium'.")
+
+    container_configs = (
+        visium_container_configs if modality == "visium" else xenium_container_configs
+    )
+
     if _analysis_type is None:
         # Display available analysis options
         print("Available Analysis Tasks:")
         print("-" * 30)
         for i, (key, config) in enumerate(container_configs.items(), 1):
-            print(f"{i}. {key.replace('_', ' ').title()}")
+            print(f"{i}. {config.get('display_name', key.replace('_', ' ').title())}")
 
         # Get user selection for analysis type
         while True:
@@ -602,7 +722,8 @@ def run_apptainer_analysis(
         analysis_type = _analysis_type
         config = container_configs[analysis_type]
 
-    print(f"\nSelected: {analysis_type.replace('_', ' ').title()}")
+    analysis_name = config.get('display_name', analysis_type.replace('_', ' ').title())
+    print(f"\nSelected: {analysis_name}")
     print(f"Container: {config['image']}")
 
     # Get parameters specific to this container
@@ -666,6 +787,7 @@ def run_apptainer_analysis(
             safe_stem = re.sub(r'[^A-Za-z0-9_-]+', '_', input_stem).strip('_') or str(index)
             print(f"\n[{index}/{len(primary_values)}] {input_path}")
             script_path = run_apptainer_analysis(
+                _modality=modality,
                 _analysis_type=analysis_type,
                 _parameter_values=image_params,
                 _batch_job_name=f"{analysis_type}_{safe_stem}",
@@ -711,11 +833,40 @@ def run_apptainer_analysis(
             print("Please re-run and enter the correct path.\n")
             return None
         
-        dataset_root = input_abs
-        for _ in range(input_depth):
-            dataset_root = os.path.dirname(dataset_root)
+        if modality == 'xenium':
+            try:
+                dataset_root = _derive_xenium_dataset_root(input_abs)
+            except ValueError as e:
+                print(f"\nError: {e}\n")
+                return None
+        else:
+            dataset_root = input_abs
+            for _ in range(input_depth):
+                dataset_root = os.path.dirname(dataset_root)
         
         user_params['output_dir'] = os.path.join(dataset_root, config['output_subdir'])
+
+        if config.get('skip_auto_output_param'):
+            user_params.pop('output_dir', None)
+
+        output_file_param = config.get('output_file_param')
+        if output_file_param:
+            input_stem = os.path.splitext(os.path.basename(input_abs))[0]
+            user_params[output_file_param] = os.path.join(
+                dataset_root,
+                config['output_subdir'],
+                f"{input_stem}{config.get('output_file_suffix', '')}",
+            )
+
+        if analysis_type == "xenium_registration":
+            flip, rot, used_default = _xenium_registration_orientation(input_abs)
+            user_params['flip'] = flip
+            user_params['rot'] = rot
+            if used_default:
+                print(
+                    "Notice: image name is outside IU01-IU20 and IU90-IU99; "
+                    "using default registration orientation flip=2, rot=1."
+                )
         
         if 'annotations_subdir' in config:
             user_params['annotations_dir'] = os.path.join(dataset_root, config['annotations_subdir'])
@@ -800,23 +951,27 @@ def run_apptainer_analysis(
         for root in sorted(bind_roots)
     )
     
-    if analysis_type in (
-    "frozen_glom_segmentation",
-    "multicompartment_segmentation"):
+    if config.get('needs_gpu', analysis_type in (
+        "frozen_glom_segmentation",
+        "multicompartment_segmentation",
+    )):
         NV='--nv'
     else: 
         NV=""
     
+    env_args = config.get('env_args', '')
+    python_command = config.get('python', 'python')
     apptainer_cmd_parts = [
-        f"apptainer exec {NV} {bind_args}",
+        f"apptainer exec {NV} {env_args} {bind_args}",
         f"docker://{config['image']}",
-        f"python {config['script']}"
+        f"{python_command} {config['script']}"
     ]
 
     # Add user-provided and auto-derived parameters to the apptainer command.
     # Paths are already absolute host paths, and the same roots are bound into the container.
     skip_script_params = config.get('skip_script_params', set())
     
+    cli_params = config.get('cli_params', {})
     for param_name, param_value in user_params.items():
         if param_name in skip_script_params:
             continue
@@ -824,16 +979,20 @@ def run_apptainer_analysis(
         if param_value is not None:
             if isinstance(param_value, list):
                 paths_str = " ".join(_quote_path(p) for p in param_value)
-                apptainer_cmd_parts.append(f"--{param_name} {paths_str}")
+                apptainer_cmd_parts.append(f"--{cli_params.get(param_name, param_name)} {paths_str}")
             else:
-                apptainer_cmd_parts.append(f"--{param_name} {_quote_path(param_value)}")
+                apptainer_cmd_parts.append(
+                    f"--{cli_params.get(param_name, param_name)} {_quote_path(param_value)}"
+                )
         else:
-            apptainer_cmd_parts.append(f"--{param_name}")
-    
-        # Add fixed (hardcoded) params — quote values that contain spaces.
-        for param_name, param_value in config.get('fixed_params', {}).items():
-            quoted = _quote_path(param_value)
-            apptainer_cmd_parts.append(f"--{param_name} {quoted}")
+            apptainer_cmd_parts.append(f"--{cli_params.get(param_name, param_name)}")
+
+    # Add fixed (hardcoded) params once after user and derived parameters.
+    for param_name, param_value in config.get('fixed_params', {}).items():
+        quoted = _quote_path(param_value)
+        apptainer_cmd_parts.append(
+            f"--{cli_params.get(param_name, param_name)} {quoted}"
+        )
             
     apptainer_command = " \\\n  ".join(apptainer_cmd_parts)
 
@@ -855,7 +1014,15 @@ def run_apptainer_analysis(
     # For label_transfer, clean up the expr_components folder created as a side effect.
     # For spot_annotation, rename the output *_annotations.json to Spots.json.
     cleanup_cmd = ""
-    pre_cmd = ""
+    output_path = user_params.get('output_dir') or user_params.get(
+        config.get('output_file_param', ''), ''
+    )
+    output_folder = (
+        os.path.dirname(output_path)
+        if config.get('output_file_param') and output_path
+        else output_path
+    )
+    pre_cmd = f"\nmkdir -p {_quote_path(output_folder)}" if output_folder else ""
     if analysis_type == "label_transfer" and primary in user_params:
         abs_dataset_root = dataset_rel
         cleanup_cmd = f"\nrm -rf {_quote_path(os.path.join(abs_dataset_root, 'expr_components'))}"
@@ -891,8 +1058,13 @@ done
 find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 
     gpu_lines = ""
-    if gpus > 0 and partition and _is_hipergator():
-        gpu_lines = f"#SBATCH --partition={partition}\n#SBATCH --gpus={gpus}"
+    if gpus > 0 and (modality == 'xenium' or (partition and _is_hipergator())):
+        partition_line = (
+            f"#SBATCH --partition={partition}\n"
+            if partition and _is_hipergator()
+            else ""
+        )
+        gpu_lines = f"{partition_line}#SBATCH --gpus={gpus}"
     
     # create a submission script content
     slurm_script_content = f"""#!/bin/bash
