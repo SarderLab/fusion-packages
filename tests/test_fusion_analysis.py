@@ -19,6 +19,7 @@ from fusion.plugins.plugins import (
     _track_slurm_job,
     _stream_slurm_log,
     _SLURM_JOBS,
+    _resolve_user_path,
     _xenium_registration_orientation,
     run_apptainer_analysis,
 )
@@ -208,6 +209,25 @@ def test_xenium_registration_orientations():
     print("  PASSED: Xenium registration orientation rules")
 
 
+def test_xenium_relative_input_path_resolution():
+    """Xenium inputs use the same absolute/relative resolver as Visium."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        input_dir = os.path.join(temp_dir, "fusion_demo_notebooks", "datasets", "Xenium_Reg-FE", "input")
+        os.makedirs(input_dir)
+        image_path = os.path.join(input_dir, "HE_IU20.tif")
+        open(image_path, "w").close()
+        previous_cwd = os.getcwd()
+        try:
+            os.chdir(temp_dir)
+            resolved = _resolve_user_path(
+                "fusion_demo_notebooks/datasets/Xenium_Reg-FE/input/HE_IU20.tif"
+            )
+        finally:
+            os.chdir(previous_cwd)
+        assert os.path.realpath(resolved) == os.path.realpath(image_path)
+    print("  PASSED: Xenium relative input path resolution")
+
+
 def test_xenium_frozen_glom_script():
     """Frozen glomerulus uses the unified Xenium output/log layout and fixed defaults."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -229,6 +249,7 @@ def test_xenium_frozen_glom_script():
         assert "sarderlab/fusion2.0_decoupled:histo_cloud" in content
         assert "SegmentWSILocal.py" in content
         assert f"--outputAnnotationFile {expected_output}" in content
+        assert "--output_dir" not in content
         assert "--patch_size 2000" in content
         assert "--simplify_contours 0.005" in content
         assert "#SBATCH --time=12:00:00" in content
@@ -320,6 +341,7 @@ TESTS = [
     ("slurm:  bulk segmentation submission",        test_bulk_segmentation_submits_one_job_per_image),
     ("slurm:  bulk label transfer submission",       test_bulk_label_transfer_submits_one_job_per_counts_file),
     ("xenium: registration orientation",              test_xenium_registration_orientations),
+    ("xenium: relative input path",                    test_xenium_relative_input_path_resolution),
     ("xenium: frozen glomerulus script",               test_xenium_frozen_glom_script),
     ("xenium: registration and feature scripts",       test_xenium_registration_and_feature_scripts),
     ("xenium: add cell annotation script",             test_xenium_add_cell_annotation_script),

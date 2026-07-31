@@ -814,41 +814,41 @@ def run_apptainer_analysis(
             print(f"  Warning: Could not process {h5ad_abs}: {e}")
         #print("─" * 55)
 
-    # Auto-derive output_dir (and annotations_dir if needed) from the primary input path.
-    # The primary input is something like: fusion_demo_notebooks/datasets/HBM355.CWFF.355/ometiff-pyramids/file.tif
-    # Going up input_depth levels reaches the dataset root folder.
+    # Auto-derive output_dir (and annotations_dir if needed) from the resolved
+    # primary input. Visium retains its depth-based layout. Xenium locates the
+    # dataset root from its input/ or output/ directory, independent of whether
+    # the dataset came from HuBMAP or another source.
     primary = config.get('primary_input')
     if primary and primary in user_params:
         input_abs = user_params[primary]
         input_depth = config.get('input_depth', 2)
-        
-        path_parts = [p for p in input_abs.replace('\\', '/').split('/') if p]
-        if len(path_parts) <= input_depth:
-            print(f"\nWarning: '{input_abs}' is too shallow for this analysis.")
-            print(f"  Expected a path at least {input_depth + 1} levels deep, e.g.:")
-            if input_depth == 2:
-                print(f"  fusion_demo_notebooks/datasets/HBM355.CWFF.355/ometiff-pyramids/file.tif")
-            else:
-                print(f"  fusion_demo_notebooks/datasets/HBM355.CWFF.355/expr.h5ad")
-            print("Please re-run and enter the correct path.\n")
-            return None
         
         if modality == 'xenium':
             try:
                 dataset_root = _derive_xenium_dataset_root(input_abs)
             except ValueError as e:
                 print(f"\nError: {e}\n")
+                print(
+                    "Expected a path such as "
+                    "fusion_demo_notebooks/datasets/<dataset-name>/input/<file> "
+                    "or a path below that dataset's output/ directory.\n"
+                )
                 return None
         else:
+            path_parts = [p for p in input_abs.replace('\\', '/').split('/') if p]
+            if len(path_parts) <= input_depth:
+                print(f"\nWarning: '{input_abs}' is too shallow for this analysis.")
+                print(f"  Expected a path at least {input_depth + 1} levels deep, e.g.:")
+                if input_depth == 2:
+                    print("  fusion_demo_notebooks/datasets/<dataset-name>/ometiff-pyramids/file.tif")
+                else:
+                    print("  fusion_demo_notebooks/datasets/<dataset-name>/expr.h5ad")
+                print("Please re-run and enter the correct path.\n")
+                return None
             dataset_root = input_abs
             for _ in range(input_depth):
                 dataset_root = os.path.dirname(dataset_root)
         
-        user_params['output_dir'] = os.path.join(dataset_root, config['output_subdir'])
-
-        if config.get('skip_auto_output_param'):
-            user_params.pop('output_dir', None)
-
         output_file_param = config.get('output_file_param')
         if output_file_param:
             input_stem = os.path.splitext(os.path.basename(input_abs))[0]
@@ -856,6 +856,10 @@ def run_apptainer_analysis(
                 dataset_root,
                 config['output_subdir'],
                 f"{input_stem}{config.get('output_file_suffix', '')}",
+            )
+        elif not config.get('skip_auto_output_param'):
+            user_params['output_dir'] = os.path.join(
+                dataset_root, config['output_subdir']
             )
 
         if analysis_type == "xenium_registration":
