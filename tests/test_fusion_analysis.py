@@ -250,6 +250,7 @@ def test_xenium_frozen_glom_script():
         assert "SegmentWSILocal.py" in content
         assert f"--outputAnnotationFile {expected_output}" in content
         assert "--output_dir" not in content
+        assert "export MPLBACKEND=Agg" in content
         assert "--patch_size 2000" in content
         assert "--simplify_contours 0.005" in content
         assert "#SBATCH --time=12:00:00" in content
@@ -301,6 +302,44 @@ def test_xenium_registration_and_feature_scripts():
     print("  PASSED: Xenium registration and feature extraction scripts")
 
 
+def test_xenium_bulk_registration_prompts_for_each_boundary_pair():
+    """Each image in a registration batch receives its own boundary files."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        input_dir = os.path.join(temp_dir, "input")
+        os.makedirs(input_dir)
+        images = [os.path.join(input_dir, f"HE_IU0{i}.tif") for i in (1, 2)]
+        nuclei = [
+            os.path.join(input_dir, f"HE_IU0{i}_nucleus_boundaries.csv.gz")
+            for i in (1, 2)
+        ]
+        cells = [
+            os.path.join(input_dir, f"HE_IU0{i}_cell_boundaries.csv.gz")
+            for i in (1, 2)
+        ]
+        for path in images + nuclei + cells:
+            open(path, "w").close()
+
+        submissions = [_submit_result("72101"), _submit_result("72102")]
+        with patch("builtins.input", side_effect=[
+                "2", "2", nuclei[0], cells[0], nuclei[1], cells[1]
+             ]) as mock_input, \
+             patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
+             patch("fusion.plugins.plugins.subprocess.run", side_effect=submissions):
+            results = run_apptainer_analysis(file_paths=images)
+
+        assert mock_input.call_count == 6
+        assert len(results) == 2
+        for index, result in enumerate(results):
+            with open(result["script_path"]) as script:
+                content = script.read()
+            assert images[index] in content
+            assert nuclei[index] in content
+            assert cells[index] in content
+            assert nuclei[1 - index] not in content
+            assert cells[1 - index] not in content
+    print("  PASSED: Xenium bulk registration uses per-image boundary files")
+
+
 def test_xenium_add_cell_annotation_script():
     """Cell annotation prompts for both files and emits no optional arguments."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -344,6 +383,7 @@ TESTS = [
     ("xenium: relative input path",                    test_xenium_relative_input_path_resolution),
     ("xenium: frozen glomerulus script",               test_xenium_frozen_glom_script),
     ("xenium: registration and feature scripts",       test_xenium_registration_and_feature_scripts),
+    ("xenium: bulk registration boundary pairs",       test_xenium_bulk_registration_prompts_for_each_boundary_pair),
     ("xenium: add cell annotation script",             test_xenium_add_cell_annotation_script),
 ]
 

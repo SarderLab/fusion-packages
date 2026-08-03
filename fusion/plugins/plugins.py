@@ -632,6 +632,7 @@ def run_apptainer_analysis(
                 "batch_size": 1, "min_size": 2000, "simplify_contours": 0.005,
                 "gpu": 0,
             },
+            "environment": {"MPLBACKEND": "Agg"},
             "needs_gpu": True,
         },
         "xenium_registration": {
@@ -639,6 +640,7 @@ def run_apptainer_analysis(
             "image": "sarderlab/fusion2.0_decoupled:registration-feature_extraction",
             "script": "/opt/Xenium_Analysis/Xenium_Analysis/cli/Registration/RegistrationLocal.py",
             "params": ["input_image", "nuc_boundaries", "cell_boundaries"],
+            "per_input_params": {"nuc_boundaries", "cell_boundaries"},
             "path_params": {"input_image", "nuc_boundaries", "cell_boundaries", "output_dir"},
             "output_subdir": "output",
             "primary_input": "input_image",
@@ -650,10 +652,14 @@ def run_apptainer_analysis(
             "display_name": "Cell/Nucleus Feature Extraction",
             "image": "sarderlab/fusion2.0_decoupled:registration-feature_extraction",
             "script": "/opt/Xenium_Analysis/Xenium_Analysis/cli/XeniumFE/XeniumFELocal.py",
-            "params": ["input_path"],
-            "path_params": {"input_path"},
+            "params": ["registration_output_dir"],
+            "cli_params": {"registration_output_dir": "input_path"},
+            "prompt_labels": {
+                "registration_output_dir": "registration output directory"
+            },
+            "path_params": {"registration_output_dir"},
             "output_subdir": "output",
-            "primary_input": "input_path",
+            "primary_input": "registration_output_dir",
             "input_depth": 2,
             "skip_auto_output_param": True,
             "needs_gpu": True,
@@ -737,6 +743,12 @@ def run_apptainer_analysis(
         print("-" * 40)
         for param in missing_params:
             if (
+                param in config.get('per_input_params', set())
+                and isinstance(user_params.get(config['primary_input']), list)
+            ):
+                # Prompt for this parameter inside each per-input submission.
+                continue
+            if (
                 file_paths is not None
                 and param == config['primary_input']
             ):
@@ -749,10 +761,13 @@ def run_apptainer_analysis(
                 ]
                 continue
             while True:
+                prompt_label = config.get('prompt_labels', {}).get(
+                    param, param.replace('_', ' ')
+                )
                 if param == config['primary_input']:
-                    prompt = f"Enter {param} paths (comma separated): "
+                    prompt = f"Enter {prompt_label} paths (comma separated): "
                 else:
-                    prompt = f"Enter {param} path: "
+                    prompt = f"Enter {prompt_label} path: "
                 value = input(prompt).strip()
                 if value:
                     try:
@@ -770,7 +785,7 @@ def run_apptainer_analysis(
                     except FileNotFoundError as e:
                         print(f"\nError: {e}\n")
                 else:
-                    print(f"{param} is required. Please enter a value.")
+                    print(f"{prompt_label} is required. Please enter a value.")
     elif not config['params']:
         print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
 
@@ -1069,6 +1084,11 @@ find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
             else ""
         )
         gpu_lines = f"{partition_line}#SBATCH --gpus={gpus}"
+
+    environment_lines = "\n".join(
+        f"export {name}={_quote_path(value)}"
+        for name, value in config.get('environment', {}).items()
+    )
     
     # create a submission script content
     slurm_script_content = f"""#!/bin/bash
@@ -1080,6 +1100,7 @@ find {abs_output_dir} -mindepth 1 -type d -empty -delete"""
 #SBATCH --cpus-per-task={cpus}
 {gpu_lines}
 {cache_lines}
+{environment_lines}
 
 echo "Starting job on $(hostname)"
 module load apptainer 2>/dev/null || echo "Apptainer module load skipped or failed"
