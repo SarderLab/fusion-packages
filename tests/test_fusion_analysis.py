@@ -20,6 +20,7 @@ from fusion.plugins.plugins import (
     _stream_slurm_log,
     _SLURM_JOBS,
     _resolve_user_path,
+    _derive_xenium_dataset_root,
     _xenium_registration_orientation,
     run_apptainer_analysis,
 )
@@ -228,6 +229,23 @@ def test_xenium_relative_input_path_resolution():
     print("  PASSED: Xenium relative input path resolution")
 
 
+def test_xenium_dataset_root_folder_conventions():
+    """All supported image-folder conventions resolve to the dataset root."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        dataset_root = os.path.join(temp_dir, "HE_IU20")
+        for subdir in (
+            "image", "images", "ometiff-pyramids", "input", "output", "outputs"
+        ):
+            folder = os.path.join(dataset_root, subdir)
+            os.makedirs(folder)
+            path = os.path.join(folder, "HE_IU20.tif")
+            open(path, "w").close()
+            assert os.path.realpath(
+                _derive_xenium_dataset_root(path)
+            ) == os.path.realpath(dataset_root)
+    print("  PASSED: Xenium dataset-root folder conventions")
+
+
 def test_xenium_frozen_glom_script():
     """Frozen glomerulus uses the unified Xenium output/log layout and fixed defaults."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -245,7 +263,7 @@ def test_xenium_frozen_glom_script():
 
         with open(script_path) as script:
             content = script.read()
-        expected_output = os.path.join(temp_dir, "output", "sample_glomeruli.json")
+        expected_output = os.path.join(temp_dir, "outputs", "sample_glomeruli.json")
         assert "sarderlab/fusion2.0_decoupled:histo_cloud" in content
         assert "SegmentWSILocal.py" in content
         assert f"--outputAnnotationFile {expected_output}" in content
@@ -262,7 +280,7 @@ def test_xenium_registration_and_feature_scripts():
     """Registration and feature extraction share an image but use distinct CLIs."""
     with tempfile.TemporaryDirectory() as temp_dir:
         input_dir = os.path.join(temp_dir, "input")
-        sample_output = os.path.join(temp_dir, "output", "HE_IU95")
+        sample_output = os.path.join(temp_dir, "outputs")
         os.makedirs(input_dir)
         os.makedirs(sample_output)
         paths = {
@@ -286,7 +304,8 @@ def test_xenium_registration_and_feature_scripts():
         assert "--flip 1" in registration and "--rot 1" in registration
         assert "--exp_factor 1" in registration
         assert "--downsample_factor 4" in registration
-        assert f"--output_dir {os.path.join(temp_dir, 'output')}" in registration
+        assert f"--output_dir {os.path.join(temp_dir, 'outputs')}" in registration
+        assert os.path.join(temp_dir, "outputs", "HE_IU95") in registration
 
         with patch("builtins.input", side_effect=["2", "3", sample_output]) as mock_feature_input, \
              patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
@@ -348,7 +367,7 @@ def test_xenium_bulk_registration_prompts_for_each_boundary_pair():
 def test_xenium_add_cell_annotation_script():
     """Cell annotation prompts for both files and emits no optional arguments."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        sample_output = os.path.join(temp_dir, "output", "HE_IU20")
+        sample_output = os.path.join(temp_dir, "outputs")
         os.makedirs(sample_output)
         features = os.path.join(sample_output, "Xenium Cells Features.json")
         groups = os.path.join(sample_output, "cell_groups.csv")
@@ -373,7 +392,7 @@ def test_xenium_add_cell_annotation_script():
         assert f"--features-json-path '{features}'" in content
         assert f"--cell-groups-path {groups}" in content
         assert "--annotation-column pred.subclass.l1" in content
-        assert f"--output-dir {os.path.join(temp_dir, 'output')}" in content
+        assert f"--output-dir {sample_output}" in content
         assert "custom-annots" not in content
         assert "colors-path" not in content
         assert "#SBATCH --gpus" not in content
@@ -393,6 +412,7 @@ TESTS = [
     ("slurm:  bulk label transfer submission",       test_bulk_label_transfer_submits_one_job_per_counts_file),
     ("xenium: registration orientation",              test_xenium_registration_orientations),
     ("xenium: relative input path",                    test_xenium_relative_input_path_resolution),
+    ("xenium: dataset-root folder conventions",        test_xenium_dataset_root_folder_conventions),
     ("xenium: frozen glomerulus script",               test_xenium_frozen_glom_script),
     ("xenium: registration and feature scripts",       test_xenium_registration_and_feature_scripts),
     ("xenium: bulk registration boundary pairs",       test_xenium_bulk_registration_prompts_for_each_boundary_pair),

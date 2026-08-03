@@ -283,16 +283,25 @@ def _xenium_registration_orientation(input_image):
 
 
 def _derive_xenium_dataset_root(input_path):
-    """Derive the dataset root from a path below its input/ or output/ folder."""
+    """Derive the dataset root from a recognized Xenium dataset subfolder."""
+    dataset_subdirs = {
+        'image',
+        'images',
+        'input',
+        'ometiff-pyramids',
+        'output',
+        'outputs',
+    }
     current = os.path.abspath(input_path)
     if not os.path.isdir(current):
         current = os.path.dirname(current)
     while current and current != os.path.dirname(current):
-        if os.path.basename(current).lower() in {'input', 'output'}:
+        if os.path.basename(current).lower() in dataset_subdirs:
             return os.path.dirname(current)
         current = os.path.dirname(current)
     raise ValueError(
-        "Xenium inputs must be located within the dataset's input/ or output/ directory."
+        "Xenium inputs must be located within a recognized dataset subfolder: "
+        "image/, images/, ometiff-pyramids/, input/, output/, or outputs/."
     )
 
 def get_hive_workspace_root():
@@ -643,7 +652,7 @@ def run_apptainer_analysis(
                 "inputModelFile": "segmentation model ZIP path",
             },
             "path_params": {"inputImageFile", "inputModelFile", "outputAnnotationFile"},
-            "output_subdir": "output",
+            "output_subdir": "outputs",
             "primary_input": "inputImageFile",
             "input_depth": 2,
             "output_file_param": "outputAnnotationFile",
@@ -669,7 +678,7 @@ def run_apptainer_analysis(
             },
             "per_input_params": {"nuc_boundaries", "cell_boundaries"},
             "path_params": {"input_image", "nuc_boundaries", "cell_boundaries", "output_dir"},
-            "output_subdir": "output",
+            "output_subdir": "outputs",
             "primary_input": "input_image",
             "input_depth": 2,
             "fixed_params": {"exp_factor": 1, "downsample_factor": 4},
@@ -685,7 +694,7 @@ def run_apptainer_analysis(
                 "registration_output_dir": "registration output directory"
             },
             "path_params": {"registration_output_dir"},
-            "output_subdir": "output",
+            "output_subdir": "outputs",
             "primary_input": "registration_output_dir",
             "input_depth": 2,
             "skip_auto_output_param": True,
@@ -709,7 +718,8 @@ def run_apptainer_analysis(
                 "output_dir": "output-dir",
             },
             "path_params": {"features_json_path", "cell_groups_path", "output_dir"},
-            "output_subdir": "output",
+            "output_subdir": "outputs",
+            "output_dir_from_primary_parent": True,
             "primary_input": "features_json_path",
             "input_depth": 2,
             "fixed_params": {"annotation_column": "pred.subclass.l1"},
@@ -866,8 +876,8 @@ def run_apptainer_analysis(
 
     # Auto-derive output_dir (and annotations_dir if needed) from the resolved
     # primary input. Visium retains its depth-based layout. Xenium locates the
-    # dataset root from its input/ or output/ directory, independent of whether
-    # the dataset came from HuBMAP or another source.
+    # dataset root from a recognized image/input/output subfolder, independent
+    # of whether the dataset came from HuBMAP or another source.
     primary = config.get('primary_input')
     if primary and primary in user_params:
         input_abs = user_params[primary]
@@ -880,8 +890,9 @@ def run_apptainer_analysis(
                 print(f"\nError: {e}\n")
                 print(
                     "Expected a path such as "
-                    "fusion_demo_notebooks/datasets/<dataset-name>/input/<file> "
-                    "or a path below that dataset's output/ directory.\n"
+                    "fusion_demo_notebooks/datasets/<dataset-name>/image/<file>. "
+                    "The image/, images/, ometiff-pyramids/, input/, output/, "
+                    "and outputs/ folder conventions are supported.\n"
                 )
                 return None
         else:
@@ -902,15 +913,18 @@ def run_apptainer_analysis(
         output_file_param = config.get('output_file_param')
         if output_file_param:
             input_stem = os.path.splitext(os.path.basename(input_abs))[0]
+            output_parent = os.path.join(dataset_root, config['output_subdir'])
             user_params[output_file_param] = os.path.join(
-                dataset_root,
-                config['output_subdir'],
+                output_parent,
                 f"{input_stem}{config.get('output_file_suffix', '')}",
             )
         elif not config.get('skip_auto_output_param'):
-            user_params['output_dir'] = os.path.join(
-                dataset_root, config['output_subdir']
-            )
+            if config.get('output_dir_from_primary_parent'):
+                user_params['output_dir'] = os.path.dirname(input_abs)
+            else:
+                user_params['output_dir'] = os.path.join(
+                    dataset_root, config['output_subdir']
+                )
 
         if analysis_type == "xenium_registration":
             flip, rot, used_default = _xenium_registration_orientation(input_abs)
@@ -1083,6 +1097,18 @@ def run_apptainer_analysis(
     elif analysis_type == "spot_annotation" and primary in user_params:
         abs_files_dir = os.path.join(dataset_rel, "Files")
         cleanup_cmd = f"\nmv {abs_files_dir}/*_annotations.json {abs_files_dir}/Spots.json"
+    elif analysis_type == "xenium_registration" and primary in user_params:
+        image_stem = os.path.splitext(os.path.basename(user_params[primary]))[0]
+        nested_output = os.path.join(user_params['output_dir'], image_stem)
+        flat_output = user_params['output_dir']
+        cleanup_cmd = f"""
+registration_status=$?
+if [ -d {_quote_path(nested_output)} ]; then
+    find {_quote_path(nested_output)} -mindepth 1 -maxdepth 1 \
+        -exec mv -t {_quote_path(flat_output)} -- {{}} +
+    rmdir {_quote_path(nested_output)}
+fi
+exit $registration_status"""
     elif analysis_type == "spatial_aggregation" and 'agg_annotations' in user_params:
         import json as _json
         abs_output_dir = user_params['output_dir']
