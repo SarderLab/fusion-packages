@@ -288,10 +288,15 @@ def test_xenium_registration_and_feature_scripts():
         assert "--downsample_factor 4" in registration
         assert f"--output_dir {os.path.join(temp_dir, 'output')}" in registration
 
-        with patch("builtins.input", side_effect=["2", "3", sample_output]), \
+        with patch("builtins.input", side_effect=["2", "3", sample_output]) as mock_feature_input, \
              patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
              patch("fusion.plugins.plugins.subprocess.run", return_value=_submit_result("72003")):
             feature_script = run_apptainer_analysis()
+
+        assert mock_feature_input.call_args_list[2].args[0] == (
+            "Enter registration output directory "
+            "(separate multiple paths with commas): "
+        )
 
         with open(feature_script) as script:
             feature = script.read()
@@ -350,10 +355,17 @@ def test_xenium_add_cell_annotation_script():
         for path in (features, groups):
             open(path, "w").close()
 
-        with patch("builtins.input", side_effect=["2", "4", features, groups]), \
+        with patch("builtins.input", side_effect=["2", "4", features, groups]) as mock_input, \
              patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
              patch("fusion.plugins.plugins.subprocess.run", return_value=_submit_result("72004")):
             script_path = run_apptainer_analysis()
+
+        prompts = [call.args[0] for call in mock_input.call_args_list]
+        assert prompts[2] == (
+            "Enter cell-features JSON file path "
+            "(separate multiple paths with commas): "
+        )
+        assert prompts[3] == "Enter cell-groups CSV file path: "
 
         with open(script_path) as script:
             content = script.read()

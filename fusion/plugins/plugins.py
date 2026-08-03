@@ -555,6 +555,10 @@ def run_apptainer_analysis(
             "image": "sarderlab/fusion1.0_decoupled:multi_compartment_segmentation",
             "script": "/opt/MultiC/multic/cli/MultiC/MultiCLocal.py",
             "params": ["input_file", "modelfile"],
+            "prompt_labels": {
+                "input_file": "whole-slide image path",
+                "modelfile": "segmentation model file path",
+            },
             "path_params": {"input_file", "modelfile", "output_dir"},
             "output_subdir": "Segmented_FTU",
             "primary_input": "input_file",
@@ -564,6 +568,10 @@ def run_apptainer_analysis(
             "image": "sarderlab/fusion1.0_decoupled:frozen_glom_segmentation",
             "script": "/opt/GlomSegmentation/FrozenGlomSegmentation/cli/GlomSeg/GlomSegLocal.py",
             "params": ["input_image", "model_file"],
+            "prompt_labels": {
+                "input_image": "whole-slide image path",
+                "model_file": "segmentation model file path",
+            },
             "path_params": {"input_image", "model_file", "output_dir"},
             "output_subdir": "Segmented_FTU",
             "primary_input": "input_image",
@@ -573,6 +581,7 @@ def run_apptainer_analysis(
             "image": "sarderlab/fusion1.0_decoupled:pathomic_feature_extraction",
             "script": "/opt/FExtract/fextract/cli/PathomicsFE/PathomicsFELocal.py",
             "params": ["input_image"],
+            "prompt_labels": {"input_image": "whole-slide image path"},
             "path_params": {"input_image", "annotations_dir", "output_dir"},
             "output_subdir": "Files",
             "annotations_subdir": "Segmented_FTU",
@@ -583,6 +592,10 @@ def run_apptainer_analysis(
             "image": "sarderlab/fusion1.0_decoupled:10x_visium_analysis",
             "script": "/opt/Visium_Analysis/Visium_Analysis/cli/LabelTransferLocal/LabelTransferLocal.py",
             "params": ["counts_file", "reference"],
+            "prompt_labels": {
+                "counts_file": "spatial counts file path",
+                "reference": "reference atlas file path",
+            },
             "path_params": {"counts_file", "reference", "output_dir"},
             "fixed_params": {
                 "organ": "KPMP Atlas Kidney"
@@ -595,6 +608,10 @@ def run_apptainer_analysis(
             "image": "sarderlab/fusion1.0_decoupled:10x_visium_analysis",
             "script": "/opt/Visium_Analysis/Visium_Analysis/cli/SpotAnnotationLocal/SpotAnnotationLocal.py",
             "params": ["input_file", "cell_reference_file"],
+            "prompt_labels": {
+                "input_file": "whole-slide image path",
+                "cell_reference_file": "cell reference file path",
+            },
             "path_params": {"input_file", "cell_reference_file", "output_dir"},
             "fixed_params": {},
             "output_subdir": "Files",
@@ -605,6 +622,7 @@ def run_apptainer_analysis(
             "image": "sarderlab/fusion1.0_decoupled:ftu_spot_aggregation",
             "script": "/opt/Spatial-Omics-Plugins/SpatialAggregation/cli/Aggregate/AggregateLocal.py",
             "params": ["base_annotation"],
+            "prompt_labels": {"base_annotation": "base annotation file path"},
             "path_params": {"base_annotation", "agg_annotations", "output_dir"},
             "output_subdir": "Aggregated_FTU",
             "primary_input": "base_annotation",
@@ -620,6 +638,10 @@ def run_apptainer_analysis(
             "python": "python3",
             "env_args": "--env PYTHONPATH=/HistomicsTK/histomicstk",
             "params": ["inputImageFile", "inputModelFile"],
+            "prompt_labels": {
+                "inputImageFile": "whole-slide image path",
+                "inputModelFile": "segmentation model ZIP path",
+            },
             "path_params": {"inputImageFile", "inputModelFile", "outputAnnotationFile"},
             "output_subdir": "output",
             "primary_input": "inputImageFile",
@@ -640,6 +662,11 @@ def run_apptainer_analysis(
             "image": "sarderlab/fusion2.0_decoupled:registration-feature_extraction",
             "script": "/opt/Xenium_Analysis/Xenium_Analysis/cli/Registration/RegistrationLocal.py",
             "params": ["input_image", "nuc_boundaries", "cell_boundaries"],
+            "prompt_labels": {
+                "input_image": "whole-slide image path",
+                "nuc_boundaries": "nucleus-boundaries file path",
+                "cell_boundaries": "cell-boundaries file path",
+            },
             "per_input_params": {"nuc_boundaries", "cell_boundaries"},
             "path_params": {"input_image", "nuc_boundaries", "cell_boundaries", "output_dir"},
             "output_subdir": "output",
@@ -670,6 +697,11 @@ def run_apptainer_analysis(
             "script": "/opt/add_cell_annotations/histomicstk/cli/AddCellAnnotations/AddCellAnnotationsLocal.py",
             "python": "python3",
             "params": ["features_json_path", "cell_groups_path"],
+            "prompt_labels": {
+                "features_json_path": "cell-features JSON file path",
+                "cell_groups_path": "cell-groups CSV file path",
+            },
+            "per_input_params": {"cell_groups_path"},
             "cli_params": {
                 "features_json_path": "features-json-path",
                 "cell_groups_path": "cell-groups-path",
@@ -765,9 +797,12 @@ def run_apptainer_analysis(
                     param, param.replace('_', ' ')
                 )
                 if param == config['primary_input']:
-                    prompt = f"Enter {prompt_label} paths (comma separated): "
+                    prompt = (
+                        f"Enter {prompt_label} "
+                        "(separate multiple paths with commas): "
+                    )
                 else:
-                    prompt = f"Enter {prompt_label} path: "
+                    prompt = f"Enter {prompt_label}: "
                 value = input(prompt).strip()
                 if value:
                     try:
