@@ -2,11 +2,19 @@
 
 > A Python-packaged version of FUSION in the JupyterHub interface for spatial multi-omics analysis with seamless HuBMAP data integration.
 
+> FUSION++ brings together the full spatial biology analysis pipeline — from raw data access to interactive visualization — inside a collaborative JupyterHub notebook environment. Whether you're a biologist exploring kidney tissue, a bioinformatician running segmentation workflows, or a data scientist building custom visualizations, FUSION++ provides the tools to work together in a single, secure, reproducible environment.
+
 ---
 
 ## Overview
 
-FUSION++ brings together the full spatial biology analysis pipeline — from raw data access to interactive visualization — inside a collaborative JupyterHub notebook environment. Whether you're a biologist exploring kidney tissue, a bioinformatician running segmentation workflows, or a data scientist building custom visualizations, FUSION++ provides the tools to work together in a single, secure, reproducible environment.
+To streamline user experience and broaden accessibility, FUSION++ now integrates a fully managed JupyterHub environment as a core component of its open-source offering. This pre-configured deployment removes the technical barriers to entry, enabling a diverse range of users—from students and computational biologists to clinical and translational researchers—to instantly launch interactive notebooks with full FUSION++ functionality, eliminating the need for complex manual installation or environment configuration.
+ 
+By embedding JupyterHub directly into the FUSION++ ecosystem, we provide more than just a coding interface; we offer a modular, high-performance platform optimized for the analysis of spatial omics and histology data. This integration leverages robust compute resources and a secure enclave, ensuring that user data remains private while benefiting from a standardized Python environment. Within this workspace, researchers can execute a complete, reproducible workflow: fetching large-scale datasets (such as those from the HuBMAP consortium), running complex spatial analyses, and performing interactive visualizations using the integrated HitomicUI.
+ 
+Beyond these built-in tools, the platform provides immense flexibility for advanced users to develop custom workflows and generate bespoke visualizations programmatically. While HitomicUI offers powerful interactive capabilities, the notebook environment allows researchers to extend FUSION++'s functionality to create specialized plots using Fusion++ analysis results—such as Volcano plots for differential expression or complex Heatmaps for gene mapping—that are not natively available on the standard platform. This capability transforms FUSION++ from a visualization tool into a flexible research engine, allowing users to tailor their analysis to the specific statistical needs of their study.
+ 
+This integrated environment does not only simplify onboarding but fundamentally accelerates the journey from visual observation to biological discovery. By empowering users to answer the critical questions of “what does it look like,” “what is it doing biologically,” and “where is it happening spatially,” FUSION++ enables the extraction of high-resolution insights across diverse computational settings. As we move toward FUSION 2.0, this ecosystem will continue to evolve, incorporating agentic AI for molecular discovery and expanding support for single-cell spatial omics, further cementing its role as a cross-disciplinary tool for the global research community.
 
 
 ![FUSION++ Workflow Diagram](fusion/images/data_sources.png)
