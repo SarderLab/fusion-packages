@@ -195,6 +195,61 @@ def test_bulk_label_transfer_submits_one_job_per_counts_file():
     print("  PASSED: bulk label transfer reuses the shared reference")
 
 
+def test_feature_extraction_blank_custom_layers_uses_defaults():
+    """Blank custom-layer input skips the custom-only follow-up question."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        dataset_dir = os.path.join(temp_dir, "dataset")
+        image_dir = os.path.join(dataset_dir, "ometiff-pyramids")
+        os.makedirs(image_dir)
+        os.makedirs(os.path.join(dataset_dir, "Segmented_FTU"))
+        image_path = os.path.join(image_dir, "sample.tif")
+        open(image_path, "w").close()
+
+        with patch("builtins.input", side_effect=["1", "3", ""]) as mock_input, \
+             patch("fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""), \
+             patch("fusion.plugins.plugins.subprocess.run", return_value=_submit_result("71501")):
+            results = run_apptainer_analysis(file_paths=[image_path])
+
+        assert mock_input.call_count == 3
+        with open(results[0]["script_path"]) as script:
+            content = script.read()
+        assert "--custom_annotation_layers" not in content
+        assert "--custom_annotation_layers_only" not in content
+    print("  PASSED: blank custom layers preserve default feature extraction")
+
+
+def test_feature_extraction_custom_only_prompts_and_passes_options():
+    """Custom names trigger the follow-up and both options reach the CLI."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        dataset_dir = os.path.join(temp_dir, "dataset")
+        image_dir = os.path.join(dataset_dir, "ometiff-pyramids")
+        os.makedirs(image_dir)
+        os.makedirs(os.path.join(dataset_dir, "Segmented_FTU"))
+        image_path = os.path.join(image_dir, "sample.tif")
+        open(image_path, "w").close()
+
+        with patch(
+            "builtins.input",
+            side_effect=["1", "3", "custom_gloms, custom_tubules", "y"],
+        ) as mock_input, patch(
+            "fusion.plugins.plugins._get_apptainer_cache_lines", return_value=""
+        ), patch(
+            "fusion.plugins.plugins.subprocess.run",
+            return_value=_submit_result("71502"),
+        ):
+            results = run_apptainer_analysis(file_paths=[image_path])
+
+        assert mock_input.call_count == 4
+        with open(results[0]["script_path"]) as script:
+            content = script.read()
+        assert (
+            "--custom_annotation_layers 'custom_gloms, custom_tubules'"
+            in content
+        )
+        assert "--custom_annotation_layers_only True" in content
+    print("  PASSED: custom-only feature extraction options reach local CLI")
+
+
 def _submit_result(job_id="72001"):
     return MagicMock(stdout=f"Submitted batch job {job_id}\n")
 
@@ -410,6 +465,8 @@ TESTS = [
     ("slurm:  stream TIMEOUT path",                 test_slurm_stream_timeout),
     ("slurm:  bulk segmentation submission",        test_bulk_segmentation_submits_one_job_per_image),
     ("slurm:  bulk label transfer submission",       test_bulk_label_transfer_submits_one_job_per_counts_file),
+    ("slurm:  feature extraction defaults",           test_feature_extraction_blank_custom_layers_uses_defaults),
+    ("slurm:  feature extraction custom-only",        test_feature_extraction_custom_only_prompts_and_passes_options),
     ("xenium: registration orientation",              test_xenium_registration_orientations),
     ("xenium: relative input path",                    test_xenium_relative_input_path_resolution),
     ("xenium: dataset-root folder conventions",        test_xenium_dataset_root_folder_conventions),

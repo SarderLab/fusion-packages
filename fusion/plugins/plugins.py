@@ -834,6 +834,42 @@ def run_apptainer_analysis(
     elif not config['params']:
         print(f"\nNo additional parameters required for {analysis_type.replace('_', ' ').title()}")
 
+    if analysis_type == "feature_extraction":
+        if "custom_annotation_layers" not in user_params:
+            if _parameter_values is None:
+                custom_layers = input(
+                    "Enter Custom Annotation Layer Names "
+                    "(comma-separated, leave blank for defaults only): "
+                ).strip()
+                if custom_layers:
+                    user_params["custom_annotation_layers"] = custom_layers
+            else:
+                custom_layers = ""
+        else:
+            custom_layers = str(
+                user_params.get("custom_annotation_layers") or ""
+            ).strip()
+            if custom_layers:
+                user_params["custom_annotation_layers"] = custom_layers
+            else:
+                user_params.pop("custom_annotation_layers", None)
+
+        if custom_layers:
+            if "custom_annotation_layers_only" not in user_params:
+                while True:
+                    custom_only = input(
+                        "Process custom annotation layers only? (y/n): "
+                    ).strip().lower()
+                    if custom_only in {"y", "yes"}:
+                        user_params["custom_annotation_layers_only"] = True
+                        break
+                    if custom_only in {"n", "no"}:
+                        user_params["custom_annotation_layers_only"] = False
+                        break
+                    print("Please enter y or n.")
+        else:
+            user_params.pop("custom_annotation_layers_only", None)
+
     primary = config.get('primary_input')
     primary_values = user_params.get(primary)
     if isinstance(primary_values, list):
