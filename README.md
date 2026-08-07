@@ -1,4 +1,9 @@
+<p align="center">
+ <img width="200" height="154.5" alt="Fusion-Logo-Navigator-Color01" src="https://github.com/user-attachments/assets/c6c7c6d6-cb07-41c4-ba04-68666251829b"/> </p>
+
 # FUSION++ 
+
+![Python](https://img.shields.io/badge/python-%3E%3D3.9-blue)
 
 > A Python-packaged version of FUSION in the JupyterHub interface for spatial multi-omics analysis with seamless HuBMAP data integration.
 
