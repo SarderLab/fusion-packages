@@ -91,7 +91,7 @@ def visualize_wsi(gc, hubmap_id=None, item_id=None, user=None, dir_path=None):
         item_name = item.get('name', '')
         item_id = item.get('_id', '')
         
-        if item_name.endswith(('.ome.tiff', '.ome.tif', '.tiff', '.tif')):
+        if item_name.lower().endswith(('.ome.tiff', '.ome.tif', '.tiff', '.tif', '.ndpi', '.svs')):
             wsi_files.append({
                 'file': item_name,
                 'item_id': item_id,
