@@ -1104,7 +1104,8 @@ def run_apptainer_analysis(
             if os.path.isdir(segmented_ftu_dir):
                 ann_files = sorted([
                     f for f in os.listdir(segmented_ftu_dir)
-                    if os.path.splitext(f)[1].lower() in supported_exts
+                    if os.path.isfile(os.path.join(segmented_ftu_dir, f))
+                    and os.path.splitext(f)[1].lower() in supported_exts
                 ])
             else:
                 ann_files = []
@@ -1114,31 +1115,10 @@ def run_apptainer_analysis(
                 print("Please ensure Segmented FTU annotations exist before running aggregation.")
                 return None
 
-            print(f"\nAvailable annotations in Segmented FTU:")
-            print("-" * 40)
-            for i, fname in enumerate(ann_files, 1):
-                print(f"  {i}. {fname}")
-
-            while True:
-                sel = input("\nEnter annotation numbers to aggregate (comma-separated, e.g. 1,3): ").strip()
-                try:
-                    indices = [int(x.strip()) for x in sel.split(',')]
-                    selected_paths = []
-                    valid = True
-                    for idx in indices:
-                        if 1 <= idx <= len(ann_files):
-                            ann_path = os.path.join(dataset_root, "Segmented_FTU", ann_files[idx - 1])
-                            selected_paths.append(ann_path)
-                        else:
-                            print(f"  {idx} is out of range (1-{len(ann_files)}). Please try again.")
-                            valid = False
-                            break
-                    if valid and selected_paths:
-                        user_params['agg_annotations'] = selected_paths
-                        print(f"Selected {len(selected_paths)} annotation(s): {[ann_files[i-1] for i in indices]}")
-                        break
-                except ValueError:
-                    print("Please enter numbers separated by commas.")
+            user_params['agg_annotations'] = [
+                os.path.join(segmented_ftu_dir, filename)
+                for filename in ann_files
+            ]
 
     # Job name is derived from the analysis type key (already snake_case)
     job_name = _batch_job_name or analysis_type
