@@ -134,7 +134,15 @@ def check_job_status(job_id=None, mode=None):
         if not job_id:
             print("No Job ID entered.")
             return
-        job_id = str(job_id)
+        job_ids = [value.strip() for value in str(job_id).split(',') if value.strip()]
+        if not job_ids:
+            print("No Job ID entered.")
+            return
+        if len(job_ids) > 1:
+            for current_job_id in job_ids:
+                check_job_status(current_job_id, 'live_logs')
+            return
+        job_id = job_ids[0]
 
         # Detect job type: Girder if found in _FUSION_JOBS, otherwise Slurm
         if job_id in _FUSION_JOBS:
@@ -594,6 +602,7 @@ def run_apptainer_analysis(
     _parameter_values=None,
     _batch_job_name=None,
     _cache_lines=None,
+    _quiet_submission=False,
 ):
     """
     Generate and submit analysis tasks using Apptainer containers via Slurm.
@@ -822,8 +831,9 @@ def run_apptainer_analysis(
         config = container_configs[analysis_type]
 
     analysis_name = config.get('display_name', analysis_type.replace('_', ' ').title())
-    print(f"\nSelected: {analysis_name}")
-    print(f"Container: {config['image']}")
+    if not _quiet_submission:
+        print(f"\nSelected: {analysis_name}")
+        print(f"Container: {config['image']}")
 
     # Get parameters specific to this container
     user_params = dict(_parameter_values or {})
@@ -946,19 +956,29 @@ def run_apptainer_analysis(
             image_params[primary] = input_path
             input_stem = os.path.splitext(os.path.basename(input_path))[0]
             safe_stem = re.sub(r'[^A-Za-z0-9_-]+', '_', input_stem).strip('_') or str(index)
-            print(f"\n[{index}/{len(primary_values)}] {input_path}")
-            script_path = run_apptainer_analysis(
+            print(f"[{index}/{len(primary_values)}] {input_path}")
+            submission = run_apptainer_analysis(
                 _modality=modality,
                 _analysis_type=analysis_type,
                 _parameter_values=image_params,
                 _batch_job_name=f"{analysis_type}_{safe_stem}",
                 _cache_lines=cache_lines,
+                _quiet_submission=True,
             )
             submissions.append({
                 'input_path': input_path,
-                'script_path': script_path,
+                **submission,
             })
-        print(f"\nBulk submission complete: {len(submissions)} job(s) processed.")
+        job_ids = [job['job_id'] for job in submissions if job['job_id']]
+        if job_ids:
+            comma_ids = ", ".join(job_ids)
+            print(f"\nJob IDs: {comma_ids}")
+            print("\nTo watch all your jobs:      check_job_status()")
+            print(
+                "To stream live log output:   "
+                f"check_job_status('{comma_ids}', 'live_logs')"
+            )
+            print(f"To cancel:                   !scancel {' '.join(job_ids)}")
         return submissions
     
     if (
@@ -1271,6 +1291,7 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
 """
     
     # Write the script to file
+    job_id = None
     try:
         with open(script_filename, 'w') as f:
             f.write(slurm_script_content)
@@ -1296,17 +1317,20 @@ module load apptainer 2>/dev/null || echo "Apptainer module load skipped or fail
                 'start': time.time(),
             }
 
-            print(f"\nJob submitted  |  ID: {job_id}  |  Name: {job_name}")
-            print(f"Log: {log_path}")
-            print(f"\nTo watch all your jobs:      check_job_status()")
-            print(f"To stream live log output:   check_job_status('{job_id}', 'live_logs')")
-            print(f"To cancel:                   !scancel {job_id}")
+            if not _quiet_submission:
+                print(f"\nJob submitted  |  ID: {job_id}  |  Name: {job_name}")
+                print(f"Log: {log_path}")
+                print(f"\nTo watch all your jobs:      check_job_status()")
+                print(f"To stream live log output:   check_job_status('{job_id}', 'live_logs')")
+                print(f"To cancel:                   !scancel {job_id}")
             
     except subprocess.CalledProcessError as e:
         print(f"Error submitting job: {e.stderr}")
     except FileNotFoundError:
         print("Error: 'sbatch' command not found. Are you on a cluster login node?")
 
+    if _quiet_submission:
+        return {'script_path': script_filename, 'job_id': job_id}
     return script_filename
 
 def run_analysis_tasks_fusion_backend(gc, user_name, hubmap_id=None, file_path=None, file_paths=None, dir_path=None):
