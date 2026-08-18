@@ -843,18 +843,18 @@ def run_apptainer_analysis(
         and primary not in user_params
         and _parameter_values is None
     ):
-        print("\nSelect input mode:")
-        print("  [1] Single dataset")
-        print("  [2] Multiple datasets")
+        print("\nSelect Input Mode:")
+        print("  [1] Single Dataset")
+        print("  [2] Multiple Datasets")
         while True:
-            input_mode = input("Enter choice (1/2): ").strip()
+            input_mode = input("Enter Choice (1/2): ").strip()
             if input_mode in {'1', '2'}:
                 break
             print("Please enter 1 or 2.")
         if input_mode == '2':
             while True:
                 parent_dir = input(
-                    "Enter parent directory containing the datasets: "
+                    "Enter Parent Directory Containing the Datasets: "
                 ).strip()
                 if not parent_dir:
                     print("Parent directory is required.")
