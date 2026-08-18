@@ -535,9 +535,60 @@ def _get_apptainer_cache_lines():
         f"export APPTAINER_CACHEDIR={_quote_path(cache_path)}\n"
         f"export APPTAINER_TMPDIR={_quote_path(tmp_path)}"
     )
-            
+
+
+def _discover_visium_inputs(parent_dir, analysis_type):
+    """Find one primary plugin input in each Visium dataset folder."""
+    image_analyses = {
+        'multicompartment_segmentation', 'frozen_glom_segmentation',
+        'feature_extraction', 'spot_annotation',
+    }
+    dataset_dirs = sorted(
+        os.path.join(parent_dir, name)
+        for name in os.listdir(parent_dir)
+        if os.path.isdir(os.path.join(parent_dir, name))
+        and not name.startswith('.')
+    )
+    if not dataset_dirs:
+        raise ValueError(f"No dataset folders found in: {parent_dir}")
+
+    inputs = []
+    for dataset_dir in dataset_dirs:
+        if analysis_type in image_analyses:
+            matches = []
+            for folder in ('ometiff-pyramids', 'image', 'images'):
+                image_dir = os.path.join(dataset_dir, folder)
+                if os.path.isdir(image_dir):
+                    matches.extend(
+                        os.path.join(image_dir, name)
+                        for name in os.listdir(image_dir)
+                        if name.lower().endswith(('.tif', '.tiff', '.svs', '.ndpi'))
+                    )
+            expected = "WSI in ometiff-pyramids/, image/, or images/"
+        elif analysis_type == 'label_transfer':
+            matches = [
+                os.path.join(dataset_dir, name)
+                for name in os.listdir(dataset_dir)
+                if name.lower().endswith(('.h5ad', '.rds'))
+            ]
+            expected = "counts file (.h5ad or .RDS)"
+        else:  # spatial_aggregation
+            spots = os.path.join(dataset_dir, 'Files', 'Spots.json')
+            matches = [spots] if os.path.isfile(spots) else []
+            expected = "Files/Spots.json"
+
+        if len(matches) != 1:
+            raise ValueError(
+                f"{os.path.basename(dataset_dir)}: expected one {expected}, "
+                f"found {len(matches)}."
+            )
+        inputs.append(matches[0])
+    return inputs
+
+
 def run_apptainer_analysis(
     file_paths=None,
+    dir_path=None,
     _modality=None,
     _analysis_type=None,
     _parameter_values=None,
@@ -776,6 +827,13 @@ def run_apptainer_analysis(
 
     # Get parameters specific to this container
     user_params = dict(_parameter_values or {})
+    primary = config.get('primary_input')
+    if modality == 'visium' and file_paths is not None:
+        raise ValueError("For Visium bulk jobs, provide dir_path instead of file_paths.")
+    if modality == 'visium' and dir_path is not None:
+        user_params[primary] = _discover_visium_inputs(
+            _resolve_user_path(dir_path), analysis_type
+        )
     missing_params = [
         param for param in config['params']
         if param not in user_params
@@ -808,8 +866,9 @@ def run_apptainer_analysis(
                 )
                 if param == config['primary_input']:
                     prompt = (
-                        f"Enter {prompt_label} "
-                        "(separate multiple paths with commas): "
+                        f"Enter {prompt_label} or Visium datasets parent directory: "
+                        if modality == 'visium'
+                        else f"Enter {prompt_label} (separate multiple paths with commas): "
                     )
                 else:
                     prompt = f"Enter {prompt_label}: "
@@ -817,13 +876,20 @@ def run_apptainer_analysis(
                 if value:
                     try:
                         if param == config['primary_input']:
-                            paths = [path.strip() for path in value.split(',') if path.strip()]
-                            resolved_paths = [
-                                _resolve_user_path(path, must_exist=True) for path in paths
-                            ]
-                            user_params[param] = (
-                                resolved_paths if len(resolved_paths) > 1 else resolved_paths[0]
-                            )
+                            if modality == 'visium':
+                                resolved = _resolve_user_path(value)
+                                user_params[param] = (
+                                    _discover_visium_inputs(resolved, analysis_type)
+                                    if os.path.isdir(resolved) else resolved
+                                )
+                            else:
+                                paths = [path.strip() for path in value.split(',') if path.strip()]
+                                resolved_paths = [
+                                    _resolve_user_path(path, must_exist=True) for path in paths
+                                ]
+                                user_params[param] = (
+                                    resolved_paths if len(resolved_paths) > 1 else resolved_paths[0]
+                                )
                         else:
                             user_params[param] = _resolve_user_path(value, must_exist=True)
                         break
@@ -870,7 +936,6 @@ def run_apptainer_analysis(
         else:
             user_params.pop("custom_annotation_layers_only", None)
 
-    primary = config.get('primary_input')
     primary_values = user_params.get(primary)
     if isinstance(primary_values, list):
         cache_lines = _cache_lines if _cache_lines is not None else _get_apptainer_cache_lines()
@@ -1587,7 +1652,7 @@ def run_analysis(backend, gc=None, user_name=None, hubmap_id=None, file_path=Non
         if hubmap_id is not None:
             HuBMAP_to_workspace_download(hubmap_id)
         
-        return run_apptainer_analysis(file_paths=file_paths)
+        return run_apptainer_analysis(file_paths=file_paths, dir_path=dir_path)
     
     elif backend == 'fusion':
         if gc is None or user_name is None:
