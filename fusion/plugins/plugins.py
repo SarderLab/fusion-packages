@@ -134,15 +134,7 @@ def check_job_status(job_id=None, mode=None):
         if not job_id:
             print("No Job ID entered.")
             return
-        job_ids = [value.strip() for value in str(job_id).split(',') if value.strip()]
-        if not job_ids:
-            print("No Job ID entered.")
-            return
-        if len(job_ids) > 1:
-            for current_job_id in job_ids:
-                check_job_status(current_job_id, 'live_logs')
-            return
-        job_id = job_ids[0]
+        job_id = str(job_id)
 
         # Detect job type: Girder if found in _FUSION_JOBS, otherwise Slurm
         if job_id in _FUSION_JOBS:
@@ -547,6 +539,8 @@ def _get_apptainer_cache_lines():
 
 def _discover_visium_inputs(parent_dir, analysis_type):
     """Find one primary plugin input in each Visium dataset folder."""
+    if not os.path.isdir(parent_dir):
+        raise ValueError(f"Parent directory not found: {parent_dir}")
     image_analyses = {
         'multicompartment_segmentation', 'frozen_glom_segmentation',
         'feature_extraction', 'spot_annotation',
@@ -844,6 +838,34 @@ def run_apptainer_analysis(
         user_params[primary] = _discover_visium_inputs(
             _resolve_user_path(dir_path), analysis_type
         )
+    elif (
+        modality == 'visium'
+        and primary not in user_params
+        and _parameter_values is None
+    ):
+        print("\nSelect input mode:")
+        print("  [1] Single dataset")
+        print("  [2] Multiple datasets")
+        while True:
+            input_mode = input("Enter choice (1/2): ").strip()
+            if input_mode in {'1', '2'}:
+                break
+            print("Please enter 1 or 2.")
+        if input_mode == '2':
+            while True:
+                parent_dir = input(
+                    "Enter parent directory containing the datasets: "
+                ).strip()
+                if not parent_dir:
+                    print("Parent directory is required.")
+                    continue
+                try:
+                    user_params[primary] = _discover_visium_inputs(
+                        _resolve_user_path(parent_dir), analysis_type
+                    )
+                    break
+                except (FileNotFoundError, ValueError) as e:
+                    print(f"\nError: {e}\n")
     missing_params = [
         param for param in config['params']
         if param not in user_params
@@ -876,7 +898,7 @@ def run_apptainer_analysis(
                 )
                 if param == config['primary_input']:
                     prompt = (
-                        f"Enter {prompt_label} or Visium datasets parent directory: "
+                        f"Enter {prompt_label}: "
                         if modality == 'visium'
                         else f"Enter {prompt_label} (separate multiple paths with commas): "
                     )
@@ -888,10 +910,9 @@ def run_apptainer_analysis(
                         if param == config['primary_input']:
                             if modality == 'visium':
                                 resolved = _resolve_user_path(value)
-                                user_params[param] = (
-                                    _discover_visium_inputs(resolved, analysis_type)
-                                    if os.path.isdir(resolved) else resolved
-                                )
+                                if os.path.isdir(resolved):
+                                    raise ValueError("Expected a file path, not a directory.")
+                                user_params[param] = resolved
                             else:
                                 paths = [path.strip() for path in value.split(',') if path.strip()]
                                 resolved_paths = [
@@ -903,7 +924,7 @@ def run_apptainer_analysis(
                         else:
                             user_params[param] = _resolve_user_path(value, must_exist=True)
                         break
-                    except FileNotFoundError as e:
+                    except (FileNotFoundError, ValueError) as e:
                         print(f"\nError: {e}\n")
                 else:
                     print(f"{prompt_label} is required. Please enter a value.")
@@ -976,7 +997,7 @@ def run_apptainer_analysis(
             print("\nTo watch all your jobs:      check_job_status()")
             print(
                 "To stream live log output:   "
-                f"check_job_status('{comma_ids}', 'live_logs')"
+                "check_job_status('Replace_With_Job_ID', 'live_logs')"
             )
             print(f"To cancel:                   !scancel {' '.join(job_ids)}")
         return submissions
